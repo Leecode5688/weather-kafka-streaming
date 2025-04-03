@@ -1,0 +1,30 @@
+# Configuration files
+config/
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+venv/
+.env
+config/.env
+
+# Data Files
+*.json
+*.csv
+*.log
+data_ingestion/
+
+# Kafka & Zookeeper Logs
+kafka-logs/
+zookeeper/
+
+# MongoDB & Kafka Storage
+*.db
+*.lock
+*.pid
+*.sock
+*.out
+*.log
