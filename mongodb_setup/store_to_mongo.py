@@ -1,13 +1,17 @@
 from kafka import KafkaConsumer
 from pymongo import MongoClient, InsertOne, errors
+from dotenv import load_dotenv
 import json
 import time
+import os
 
+load_dotenv(dotenv_path="config/.env")
 KAFKA_BROKER = 'localhost:9092'
 TOPIC = 'weather_data'
 TIME_OUT = 600
 
-MONGO_URI = 'mongodb://localhost:27017/'
+# MONGO_URI = 'mongodb://localhost:27017/'
+MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = 'weather_db'
 COLLECTION_NAME = 'weather_data'
 
@@ -80,7 +84,19 @@ def consume_weather_data():
     print("Consumer closed.")
     client.close()
     print("MongoDB connection closed.")
+
+def test():
+    try:
+        # Test the connection to MongoDB
+        dbs = client.list_database_names()
+        if dbs:
+            print("MongoDB connection successful! :)")
+        else:
+            print("No databases found. MongoDB connection failed :(")
+    except Exception as e:
+        print(f"An error occurred: {e}") 
         
 if __name__ == "__main__":
+    test()
     consume_weather_data()
     

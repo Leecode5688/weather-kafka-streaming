@@ -1,6 +1,5 @@
 from data_ingestion.fetch_weather import fetch_weather_data
 from kafka_setup.kafka_producer import send_weather_data
-# from kafka_setup.kafka_consumer import consume_weather_data
 from mongodb_setup.store_to_mongo import consume_weather_data as store_to_mongo
 import threading
 import time
@@ -22,11 +21,8 @@ def wait_for_file_ready(file_path):
     return False
 
 def run_pipeline():
-    "Fetch weather data, send it to Kafka, and store it in MongoDB"
     print("Starting the data pipeline :)")
-    "Fetch weather data and send it to Kafka"
     fetch_weather_data()
-    # Ensure data is fetched before sending
     if not wait_for_file_ready(WEATHER_DATA_PATH):
         print("Weather data not ready. Exiting pipeline.")
         return

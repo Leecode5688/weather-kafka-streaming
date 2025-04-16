@@ -23,7 +23,6 @@ def send_weather_data():
     end_time = start_time + RUN_DURATION
     
     #only send when data has changed
-    # last_sent_unique_key = None
     sent_keys = set()
     
     while time.time() < end_time:
