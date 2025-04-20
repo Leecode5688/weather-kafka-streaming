@@ -9,7 +9,7 @@ def create_consumer():
     return KafkaConsumer(
         TOPIC,
         bootstrap_servers=KAFKA_BROKER,
-        api_version=(3, 9, 0),
+        api_version=(3, 9),
         value_deserializer=lambda x: json.loads(x.decode('utf-8')),
         auto_offset_reset='earliest',
         enable_auto_commit=True,
