@@ -1,0 +1,93 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+  mongodb:
+    image: mongo:6
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.runCommand({ ping: 1})", "--quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  weather_pipeline:
+    build:
+      context: ..
+      dockerfile: docker/producer.Dockerfile
+    container_name: weather_pipeline
+    env_file:
+      - ../config/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    depends_on:
+      kafka: 
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ../logs:/app/logs
+  weather_consumer:
+    build:
+      context: ..
+      dockerfile: docker/consumer.Dockerfile
+    container_name: weather_consumer
+    env_file:
+      - ../config/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    volumes:
+      - ../logs:/app/logs
+  weather_fetcher:
+    build:
+      context: ..
+      dockerfile: docker/fetcher.Dockerfile
+    container_name: weather_fetcher
+    env_file:
+      - ../config/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ../logs:/app/logs
+volumes:
+  mongo_data:
+  logs:

@@ -1,6 +1,7 @@
-from data_ingestion.fetch_weather import fetch_weather_data
-from kafka_setup.kafka_producer import send_weather_data
-from mongodb_setup.store_to_mongo import consume_weather_data as store_to_mongo
+from fetcher_service.fetch_weather import fetch_weather_data
+from producer_service.kafka_producer import send_weather_data
+from consumer_service.kafka_consumer import consume_weather_data
+from mongodb_service.store_to_mongo import store_weather_data, store_weather_batch
 import threading
 import logging
 import time
@@ -27,41 +28,40 @@ console_Handler.setFormatter(formatter)
 logger.addHandler(file_Handler)
 logger.addHandler(console_Handler)
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
 
-WEATHER_DATA_PATH = "data_ingestion/weather_data.json"
-TIME_OUT = 60
+# WEATHER_DATA_PATH = "data_ingestion/weather_data.json"
+# TIME_OUT = 60
 
-def wait_for_file_ready(file_path):
-    logger.info(f"Waiting for {file_path} to be ready ;)")
-    start_time = time.time()
-    while time.time()-start_time < TIME_OUT:
-        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-            logger.info(f"{file_path} is ready :)")
-            return True
-        time.sleep(1)
-    logger.warning(f"{file_path} is not ready within the timeout period :(")
-    return False
+# def wait_for_file_ready(file_path):
+#     logger.info(f"Waiting for {file_path} to be ready ;)")
+#     start_time = time.time()
+#     while time.time()-start_time < TIME_OUT:
+#         if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+#             logger.info(f"{file_path} is ready :)")
+#             return True
+#         time.sleep(1)
+#     logger.warning(f"{file_path} is not ready within the timeout period :(")
+#     return False
 
 def run_pipeline():
     logger.info("Starting the data pipeline :)")
-    fetch_weather_data()
-    if not wait_for_file_ready(WEATHER_DATA_PATH):
-        logger.warning("Weather data not ready. Exiting pipeline.")
-        return
+    producer_thread = threading.Thread(target=send_weather_data, name="KafkaProducerThread")
+    consumer_thread = threading.Thread(target=consume_weather_data, name="KafkaConsumerThread")
 
-    logger.info("Weather data fetched. Sending to Kafka :)")
-    send_thread = threading.Thread(target=send_weather_data)
-    logger.info("Consume & store weather data to MongoDB :)")
-    consume_and_store_thread = threading.Thread(target=store_to_mongo)
-    
-    send_thread.start()
-    consume_and_store_thread.start()
-    
-    send_thread.join()
-    consume_and_store_thread.join()
-    logger.info("Data pipeline completed :)")
-    
+    producer_thread.start()
+    consumer_thread.start()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("Pipeline interrupted by user.")
+    finally:
+        producer_thread.join()
+        consumer_thread.join()
+        logger.info("Data pipeline completed :)")
+
 if __name__ == "__main__":
     run_pipeline()
     logger.info("Weather data pipeline should be running :)")

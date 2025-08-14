@@ -15,7 +15,6 @@ config/.env
 *.json
 *.csv
 *.log
-data_ingestion/
 
 # Kafka & Zookeeper Logs
 kafka-logs/
