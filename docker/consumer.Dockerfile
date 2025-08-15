@@ -1,4 +1,5 @@
 FROM python:3.11-slim
+
 WORKDIR /app
 
 COPY requirements.txt ./
@@ -9,4 +10,4 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
-CMD ["python", "consumer_service/kafka_consumer.py"]
+CMD ["python", "-m", "consumer_service.main"]

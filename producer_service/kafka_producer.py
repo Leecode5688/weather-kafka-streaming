@@ -6,8 +6,7 @@ import json
 import time
 import os
 
-logger = logging.getLogger(__name__)
-
+logger = logging.getLogger("producer_service.kafka_producer")
 
 def create_producer():
     return KafkaProducer(
@@ -41,6 +40,5 @@ def send_weather_data():
     producer.close()
     logger.info("Kafka producer closed")
 
-if __name__ == "__main__":
-    send_weather_data()
+
     

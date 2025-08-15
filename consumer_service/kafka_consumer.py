@@ -1,15 +1,14 @@
 from kafka import KafkaConsumer
 from config.config import KAFKA_BROKER, KAFKA_TOPIC, TIME_OUT
-from mongodb_service.store_to_mongo import store_weather_data, store_weather_batch
+from mongodb_service.store_to_mongo import connect_to_mongo, close_connection, store_weather_batch
 import json
 import time
 import logging
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
-BATCH_SIZE = 50
-BATCH_TIMEOUT = 50
+logger = logging.getLogger("consumer_service.kafka_consumer")
 
+BATCH_SIZE = 5
+BATCH_TIMEOUT = 50
 
 def create_consumer():
     return KafkaConsumer(
@@ -21,10 +20,17 @@ def create_consumer():
         enable_auto_commit=True,
     )
     
-def consume_weather_data():
+def batch_consume_weather_data():
     consumer = create_consumer()
     logger.info(f"Starting to consume messages from Kafka topic: {KAFKA_TOPIC}")
     
+    try:
+        collection = connect_to_mongo()
+        logger.info("MongoDB connection established and collection ready.")
+    except Exception as e:
+        logger.error(f"Error establishing MongoDB connection: {e}")
+        return
+
     last_message_time = time.time()
     batch = []
     batch_start_time = time.time()
@@ -37,14 +43,15 @@ def consume_weather_data():
                     logger.info("No new messages received, exiting consumer.")
                     break
                 if batch and (time.time() - batch_start_time > BATCH_TIMEOUT):
-                    store_weather_batch(batch)
+                    store_weather_batch(collection, batch)
                     batch.clear()
                     batch_start_time = time.time()
                 continue
             
+            last_message_time = time.time()
+            
             for topic_partition, records in messages.items():
                 for record in records:
-                    last_message_time = time.time()
                     data = record.value
                     if isinstance(data, dict):
                         batch.append(data)
@@ -53,13 +60,7 @@ def consume_weather_data():
 
                     #flush if batch is full
                     if len(batch) >= BATCH_SIZE:
-                        store_weather_batch(batch)
-                        batch.clear()
-                        batch_start_time = time.time()
-
-                    #flush if timeout reached
-                    if batch and (time.time() - batch_start_time > BATCH_TIMEOUT):
-                        store_weather_batch(batch)
+                        store_weather_batch(collection, batch)
                         batch.clear()
                         batch_start_time = time.time()
 
@@ -69,10 +70,9 @@ def consume_weather_data():
         logger.error(f"Error occurred: {e}")
     finally:
         if batch:
-            store_weather_batch(batch)
+            store_weather_batch(collection, batch)
             batch.clear()
         consumer.close()
         logger.info("Kafka consumer closed.")
+        close_connection(collection.client)
 
-if __name__ == "__main__":
-    consume_weather_data()

@@ -7,7 +7,7 @@ import os
 
 station_ids_of_interest=STATION_IDS_OF_INTEREST
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("fetcher_service.fetch_weather")
 
 def fetch_weather_data():
     """
@@ -59,9 +59,3 @@ def get_weather():
         logging.error(f"Error fetching data from API: {e}")
         return []
     
-if __name__ == "__main__":
-    data = get_weather()
-    if data:
-        print(json.dumps(data, indent=2, ensure_ascii=False))
-    else:
-        print("No data fetched")

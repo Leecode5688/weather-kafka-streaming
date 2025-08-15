@@ -28,22 +28,6 @@ console_Handler.setFormatter(formatter)
 logger.addHandler(file_Handler)
 logger.addHandler(console_Handler)
 
-# logger = logging.getLogger(__name__)
-
-# WEATHER_DATA_PATH = "data_ingestion/weather_data.json"
-# TIME_OUT = 60
-
-# def wait_for_file_ready(file_path):
-#     logger.info(f"Waiting for {file_path} to be ready ;)")
-#     start_time = time.time()
-#     while time.time()-start_time < TIME_OUT:
-#         if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-#             logger.info(f"{file_path} is ready :)")
-#             return True
-#         time.sleep(1)
-#     logger.warning(f"{file_path} is not ready within the timeout period :(")
-#     return False
-
 def run_pipeline():
     logger.info("Starting the data pipeline :)")
     producer_thread = threading.Thread(target=send_weather_data, name="KafkaProducerThread")

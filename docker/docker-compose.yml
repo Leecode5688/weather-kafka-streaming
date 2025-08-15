@@ -7,6 +7,8 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+      TZ: Asia/Taipei
+
   kafka:
     image: confluentinc/cp-kafka:7.6.0
     container_name: kafka
@@ -19,6 +21,7 @@ services:
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      TZ: Asia/Taipei
     depends_on:
       - zookeeper
     healthcheck:
@@ -27,6 +30,21 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+  kafka_ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka_ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+      TZ: Asia/Taipei
+    depends_on:
+      - kafka
+      - zookeeper
+
   mongodb:
     image: mongo:6
     container_name: mongodb
@@ -34,11 +52,14 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    environment:
+      TZ: Asia/Taipei
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.runCommand({ ping: 1})", "--quiet"]
       interval: 10s
       timeout: 5s
       retries: 5
+
   weather_pipeline:
     build:
       context: ..
@@ -49,6 +70,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - TZ=Asia/Taipei
     depends_on:
       kafka: 
         condition: service_healthy
@@ -56,6 +78,7 @@ services:
         condition: service_healthy
     volumes:
       - ../logs:/app/logs
+
   weather_consumer:
     build:
       context: ..
@@ -66,6 +89,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - TZ=Asia/Taipei
     depends_on:
       kafka:
         condition: service_healthy
@@ -73,6 +97,7 @@ services:
         condition: service_healthy
     volumes:
       - ../logs:/app/logs
+      
   weather_fetcher:
     build:
       context: ..
@@ -83,6 +108,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - TZ=Asia/Taipei
     depends_on:
       kafka:
         condition: service_healthy
