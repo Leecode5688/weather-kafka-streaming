@@ -33,7 +33,7 @@ def connect_to_mongo():
         unique=True
     )
 
-    return collection
+    return client, collection
 
 def store_weather_batch(collection, data_list: list):
     """
