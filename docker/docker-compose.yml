@@ -83,7 +83,6 @@ services:
     build:
       context: ..
       dockerfile: docker/consumer.Dockerfile
-    container_name: weather_consumer
     env_file:
       - ../config/.env
     environment:
@@ -97,6 +96,8 @@ services:
         condition: service_healthy
     volumes:
       - ../logs:/app/logs
+    deploy:
+      replicas: 4
       
   weather_fetcher:
     build:
@@ -114,6 +115,22 @@ services:
         condition: service_healthy
     volumes:
       - ../logs:/app/logs
+  
+  stress_test_producer:
+    build:
+      context: ..
+      dockerfile: docker/producer.Dockerfile
+    container_name: stress_test_producer
+    command: ["python", "-m", "producer_service.stress_test_producer"]
+    env_file:
+      - ../config/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - TZ=Asia/Taipei
+    depends_on:
+      kafka:
+        condition: service_healthy
 volumes:
   mongo_data:
   logs:
