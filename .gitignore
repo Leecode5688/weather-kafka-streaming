@@ -1,5 +1,3 @@
-# Configuration files
-config/
 # Python cache files
 __pycache__/
 *.pyc
@@ -27,3 +25,6 @@ zookeeper/
 *.sock
 *.out
 *.log
+
+# macOS files
+.DS_Store

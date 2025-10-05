@@ -5,25 +5,6 @@ from .fetch_weather import get_weather
 from config.config import FETCH_INTERVAL
 from config.logging_config import setup_logger
 
-# if not os.path.exists("../logs"):
-#     os.makedirs("../logs")
-
-# logger = logging.getLogger("fetcher_service")
-# logger.setLevel(logging.INFO)
-
-# if logger.hasHandlers():
-#     logger.handlers.clear()
-
-# formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-
-# file_handler = logging.FileHandler("../logs/fetcher.log")
-# file_handler.setFormatter(formatter)
-# logger.addHandler(file_handler)
-
-# console_handler = logging.StreamHandler()
-# console_handler.setFormatter(formatter)
-# logger.addHandler(console_handler)
-
 logger = setup_logger("fetcher_service", "../logs/fetcher.log")
 def run_fetcher():
     logger.info("Starting fetcher service...")

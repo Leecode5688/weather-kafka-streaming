@@ -9,7 +9,6 @@ logger = logging.getLogger("consumer_service.kafka_consumer")
 
 BATCH_SIZE = 500
 BATCH_TIMEOUT = 5
-# INACTIVITY_TIMEOUT = 30
 
 def create_consumer():
     return KafkaConsumer(
@@ -58,17 +57,7 @@ def batch_consume_weather_data():
                     logger.info("No new messages received, exiting consumer due to inactivity timeout.")
                     break
                 continue
-
-            # if time.time() - last_message_time > TIME_OUT:
-            #     logger.info("No new messages received, exiting consumer.")
-            #     break
-            #     if batch and (time.time() - batch_start_time > BATCH_TIMEOUT):
-            #         store_weather_batch(collection, batch)
-            #         batch.clear()
-            #         batch_start_time = time.time()
-            #     continue
             
-            # last_message_time = time.time()
             last_message_time = now
             for topic_partition, records in messages.items():
                 for record in records:

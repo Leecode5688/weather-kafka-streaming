@@ -2,7 +2,6 @@ import json
 import logging
 import random
 import time
-import uuid
 from datetime import datetime, timezone, timedelta
 from config.config import KAFKA_BROKER, KAFKA_TOPIC
 from kafka import KafkaProducer

@@ -4,7 +4,6 @@ import logging
 import time
 import os
 
-# logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def connect_to_mongo():
@@ -63,5 +62,6 @@ def store_weather_batch(collection, data_list: list):
             logger.error(f"Error during bulk write: {e}")
 
 def close_connection(client):
+    
     client.close()
     logger.info("MongoDB connection closed.")
