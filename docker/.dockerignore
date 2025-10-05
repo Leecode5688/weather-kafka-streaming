@@ -1,0 +1,29 @@
+#git
+.git
+.gitignore
+
+#docker
+.dockerignore
+docker-compose.yml
+docker/
+
+#python virtual environment
+venv/
+env/
+
+#python cache files
+__pycache__/
+*.pyc
+
+#log files
+logs/
+*.log
+
+#ide files
+.vscode/
+
+#environment files
+config/.env
+
+#macos files
+.DS_Store
