@@ -16,9 +16,10 @@ def create_consumer():
         bootstrap_servers=KAFKA_BROKER,
         api_version=(3, 9),
         value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-        auto_offset_reset='latest',
+        auto_offset_reset='earliest',
         enable_auto_commit=True,
-        group_id='weather-consumer-group'
+        group_id='weather-consumer-group',
+        max_poll_records=5000
     )
     
 def batch_consume_weather_data():

@@ -22,4 +22,7 @@ KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "weather_data")
 TIME_OUT = int(os.getenv("TIME_OUT", 600))  # seconds
 
-
+#prometheus metrics port
+CONSUMER_METRICS_PORT = int(os.getenv("CONSUMER_METRICS_PORT", 8000))
+PRODUCER_METRICS_PORT = int(os.getenv("PRODUCER_METRICS_PORT", 8001))
+FETCHER_METRICS_PORT = int(os.getenv("FETCHER_METRICS_PORT", 8002))
