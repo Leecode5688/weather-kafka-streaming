@@ -75,6 +75,19 @@ def batch_consume_weather_data():
                         
                         logger.info(f"Message latency: {latency_ms: .2f} ms")
                         
+                        if message_count > 0 and message_count % 10000 == 0:
+                            avg_latency = total_latency / message_count
+                            logger.info("---- Interim Latency Summary -----")
+                            logger.info(f"Messages Processed in this Cycle: {message_count}")
+                            logger.info(f"Average Latency: {avg_latency:.2f} ms")
+                            
+                            #reset counters every 10k messages
+                            logger.info("Resetting latency counters for next cycle.")
+                            message_count = 0
+                            total_latency = 0
+                            max_latency = float('-inf')
+                            min_latency = float('inf')
+                        
                     if isinstance(data, dict):
                         batch.append(data)
                     else:
