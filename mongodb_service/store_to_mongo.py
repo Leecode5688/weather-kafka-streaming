@@ -54,14 +54,15 @@ def store_weather_batch(collection, data_list: list):
         
         operations.append(UpdateOne(key, {"$setOnInsert": filtered}, upsert=True))
 
-    if operations:
-        try:
-            result = collection.bulk_write(operations, ordered=False)
-            logger.info(f"Bulk write result: {result.bulk_api_result}")
-        except Exception as e:
-            logger.error(f"Error during bulk write: {e}")
+    if not operations:
+        return True
+    try:
+        collection.bulk_write(operations, ordered=False)
+        return True
+    except Exception as e:
+        logger.error(f"Error during bulk write: {e}")
+        return False
 
 def close_connection(client):
-    
     client.close()
     logger.info("MongoDB connection closed.")

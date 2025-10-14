@@ -1,11 +1,22 @@
 from kafka import KafkaConsumer
 from config.config import KAFKA_BROKER, KAFKA_TOPIC, TIME_OUT
 from mongodb_service.store_to_mongo import connect_to_mongo, close_connection, store_weather_batch
+from prometheus_client import Counter, Histogram
 import json
 import time
 import logging
 
 logger = logging.getLogger("consumer_service.kafka_consumer")
+
+# Prometheus Metrics
+MESSAGES_CONSUMED = Counter(
+    'consumer_messages_consumed_total',
+    'Total messages successfully consumed and stored'
+)
+MESSAGES_LATENCY = Histogram(
+    'consumer_message_latency_seconds',
+    'End-to-end latency of messages based on timestamp field'
+)
 
 BATCH_SIZE = 500
 BATCH_TIMEOUT = 5
@@ -16,16 +27,38 @@ def create_consumer():
         bootstrap_servers=KAFKA_BROKER,
         api_version=(3, 9),
         value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-        auto_offset_reset='earliest',
-        enable_auto_commit=True,
+        auto_offset_reset='latest',
+        enable_auto_commit=False,
         group_id='weather-consumer-group',
         max_poll_records=5000
     )
-    
+
+def flush_batch(consumer, collection, batch):
+    """
+    Helper function to write batch to MongoDB and commit offsets.
+    Also increments Prometheus counters accordingly.
+    """
+    if not batch:
+        return 0
+
+    try:
+        if store_weather_batch(collection, batch):
+            consumer.commit()
+            batch_size = len(batch)
+            MESSAGES_CONSUMED.inc(batch_size)
+            logger.info(f"Flushed and committed batch of {batch_size} records.")
+            return batch_size
+        else:
+            logger.error("Failed to store batch to MongoDB, offset not committed.")
+            return 0
+    except Exception as e:
+        logger.error(f"Error flushing batch: {e}")
+        return 0
+
 def batch_consume_weather_data():
     consumer = create_consumer()
     logger.info(f"Starting to consume messages from Kafka topic: {KAFKA_TOPIC}")
-    
+
     mongo_client = None
     try:
         mongo_client, collection = connect_to_mongo()
@@ -36,88 +69,59 @@ def batch_consume_weather_data():
 
     batch = []
     batch_start_time = time.time()
-    last_message_time = time.time()
-    
-    message_count = 0
-    total_latency = 0
-    max_latency = float('-inf')
-    min_latency = float('inf')
-    
+
     try:
         while True:
             messages = consumer.poll(timeout_ms=1000)
             now = time.time()
-            
+
+            # If no messages but there's a batch waiting too long, flush it
             if not messages:
                 if batch and (now - batch_start_time > BATCH_TIMEOUT):
-                    store_weather_batch(collection, batch)
-                    logger.info(f"Flushed batch of {len(batch)} records due to timeout.")
-                    batch.clear()
-                    batch_start_time = now
-                if now - last_message_time > TIME_OUT:
-                    logger.info("No new messages received, exiting consumer due to inactivity timeout.")
-                    break
+                    flushed = flush_batch(consumer, collection, batch)
+                    if flushed > 0:
+                        batch.clear()
+                        batch_start_time = now
                 continue
-            
-            last_message_time = now
+
             for topic_partition, records in messages.items():
                 for record in records:
                     data = record.value
-                    
-                    if data.get('timestamp'):
-                        latency_ms = (time.time() - data['timestamp']) * 1000
-                        message_count += 1
-                        total_latency += latency_ms
-                        if latency_ms > max_latency:
-                            max_latency = latency_ms
-                        if latency_ms < min_latency:
-                            min_latency = latency_ms
-                        
-                        logger.info(f"Message latency: {latency_ms: .2f} ms")
-                        
-                        if message_count > 0 and message_count % 10000 == 0:
-                            avg_latency = total_latency / message_count
-                            logger.info("---- Interim Latency Summary -----")
-                            logger.info(f"Messages Processed in this Cycle: {message_count}")
-                            logger.info(f"Average Latency: {avg_latency:.2f} ms")
-                            
-                            #reset counters every 10k messages
-                            logger.info("Resetting latency counters for next cycle.")
-                            message_count = 0
-                            total_latency = 0
-                            max_latency = float('-inf')
-                            min_latency = float('inf')
-                        
+
+                    # Handle latency using payload timestamp if present
+                    if isinstance(data, dict) and data.get('timestamp'):
+                        try:
+                            latency_seconds = time.time() - float(data['timestamp'])
+                            if latency_seconds >= 0:
+                                MESSAGES_LATENCY.observe(latency_seconds)
+                        except (TypeError, ValueError):
+                            logger.warning(f"Invalid timestamp format in message: {data.get('timestamp')}")
+
+                    # Add to batch if valid
                     if isinstance(data, dict):
                         batch.append(data)
                     else:
                         logger.warning(f"Unexpected message format: {data}")
 
-                    #flush if batch is full
+                    # Flush if batch is full
                     if len(batch) >= BATCH_SIZE:
-                        store_weather_batch(collection, batch)
-                        batch.clear()
-                        batch_start_time = time.time()
+                        flushed = flush_batch(consumer, collection, batch)
+                        if flushed > 0:
+                            batch.clear()
+                            batch_start_time = time.time()
 
     except KeyboardInterrupt:
         logger.info("Consumer interrupted by user.")
     except Exception as e:
         logger.error(f"Error occurred: {e}")
     finally:
+        # Flush remaining messages on exit
         if batch:
-            store_weather_batch(collection, batch)
-            batch.clear()
-            
-        if message_count > 0:
-            avg_latency = total_latency / message_count
-            logger.info("----Latency Summary-----")
-            logger.info(f"Total Message Processed: {message_count}")
-            logger.info(f"Average Latency: {avg_latency:.2f} ms")
-            logger.info(f"Max Latency:     {max_latency:.2f} ms")
-            logger.info(f"Min Latency:     {min_latency:.2f} ms")
-        
+            flushed = flush_batch(consumer, collection, batch)
+            if flushed > 0:
+                batch.clear()
+
         consumer.close()
         logger.info("Kafka consumer closed.")
         if mongo_client:
             close_connection(mongo_client)
-

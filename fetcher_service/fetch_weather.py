@@ -1,5 +1,6 @@
 from dotenv import load_dotenv
 from config.config import API_URL, STATION_IDS_OF_INTEREST
+from prometheus_client import Counter
 import requests
 import logging
 import json
@@ -8,6 +9,9 @@ import os
 station_ids_of_interest=STATION_IDS_OF_INTEREST
 
 logger = logging.getLogger("fetcher_service.fetch_weather")
+
+API_CALLS_SUCCESS = Counter('fetcher_api_calls_success_total', 'Total successful API calls')
+API_CALLS_FAILURE = Counter('fetcher_api_calls_failure_total', 'Total failed API calls')
 
 def fetch_weather_data():
     """
@@ -54,8 +58,10 @@ def get_weather():
     try:
         raw_data = fetch_weather_data()
         filtered_data = filter_and_save_data(raw_data, STATION_IDS_OF_INTEREST)
+        API_CALLS_SUCCESS.inc()
         return filtered_data
     except requests.RequestException as e:
         logging.error(f"Error fetching data from API: {e}")
+        API_CALLS_FAILURE.inc()
         return []
     

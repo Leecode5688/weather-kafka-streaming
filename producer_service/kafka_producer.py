@@ -1,6 +1,7 @@
 from kafka import KafkaProducer
 from fetcher_service.fetch_weather import get_weather
 from config.config import KAFKA_BROKER, KAFKA_TOPIC, FETCH_INTERVAL, RUN_DURATION
+from prometheus_client import Counter
 import logging
 import json
 import time
@@ -8,6 +9,7 @@ import os
 
 logger = logging.getLogger("producer_service.kafka_producer")
 
+MESSAGES_PRODUCED = Counter('producer_messages_sent_total', 'Total messages sent to Kafka')
 def create_producer():
     return KafkaProducer(
         bootstrap_servers=KAFKA_BROKER,
@@ -30,7 +32,9 @@ def send_weather_data():
         #note that the data would be duplicated due to the api update frequency
         for entry in weather_data:
             try:
+                entry['timestamp'] = time.time()
                 producer.send(KAFKA_TOPIC, value=entry)
+                MESSAGES_PRODUCED.inc()
             except Exception as e:
                 logger.error(f"Failed to send data to Kafka: {e}")
         

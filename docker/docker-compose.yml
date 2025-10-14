@@ -97,12 +97,14 @@ services:
       - ../config/.env
     environment:
       - PYTHONUNBUFFERED=1
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_BROKER=kafka:9092
       - TZ=Asia/Taipei
     depends_on:
       kafka: 
         condition: service_healthy
       mongodb:
+        condition: service_healthy
+      weather_consumer:
         condition: service_healthy
     volumes:
       - ../logs:/app/logs
@@ -115,7 +117,7 @@ services:
       - ../config/.env
     environment:
       - PYTHONUNBUFFERED=1
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_BROKER=kafka:9092
       - TZ=Asia/Taipei
     depends_on:
       kafka:
@@ -125,7 +127,13 @@ services:
     volumes:
       - ../logs:/app/logs
     deploy:
-      replicas: 4
+      replicas: 1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
       
   weather_fetcher:
     build:
@@ -138,28 +146,30 @@ services:
       - ../config/.env
     environment:
       - PYTHONUNBUFFERED=1
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_BROKER=kafka:9092
       - TZ=Asia/Taipei
     depends_on:
       kafka:
         condition: service_healthy
     volumes:
       - ../logs:/app/logs
-  stress_test_producer:
-    build:
-      context: ..
-      dockerfile: docker/producer.Dockerfile
-    container_name: stress_test_producer
-    command: ["python", "-m", "producer_service.stress_test_producer"]
-    env_file:
-      - ../config/.env
-    environment:
-      - PYTHONUNBUFFERED=1
-      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - TZ=Asia/Taipei
-    depends_on:
-      kafka:
-        condition: service_healthy
+  # stress_test_producer:
+  #   build:
+  #     context: ..
+  #     dockerfile: docker/producer.Dockerfile
+  #   container_name: stress_test_producer
+  #   command: ["python", "-m", "producer_service.stress_test_producer"]
+  #   env_file:
+  #     - ../config/.env
+  #   environment:
+  #     - PYTHONUNBUFFERED=1
+  #     - KAFKA_BROKER=kafka:9092
+  #     - TZ=Asia/Taipei
+  #   depends_on:
+  #     kafka:
+  #       condition: service_healthy
+  #     weather_consumer:
+  #       condition: service_healthy
 volumes:
   mongo_data:
   logs:
