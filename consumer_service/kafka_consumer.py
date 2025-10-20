@@ -1,5 +1,5 @@
 from kafka import KafkaConsumer
-from config.config import KAFKA_BROKER, KAFKA_TOPIC, TIME_OUT
+from config.config import KAFKA_BROKER, KAFKA_TOPIC, BATCH_SIZE, BATCH_TIMEOUT
 from mongodb_service.store_to_mongo import connect_to_mongo, close_connection, store_weather_batch
 from prometheus_client import Counter, Histogram
 import json
@@ -17,9 +17,6 @@ MESSAGES_LATENCY = Histogram(
     'consumer_message_latency_seconds',
     'End-to-end latency of messages based on timestamp field'
 )
-
-BATCH_SIZE = 500
-BATCH_TIMEOUT = 5
 
 def create_consumer():
     return KafkaConsumer(

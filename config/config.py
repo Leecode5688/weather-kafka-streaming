@@ -20,7 +20,9 @@ MONGO_COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME")
 #kafka config
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "weather_data")
-TIME_OUT = int(os.getenv("TIME_OUT", 600))  # seconds
+TIME_OUT = int(os.getenv("TIME_OUT", 600))
+BATCH_TIMEOUT = int(os.getenv("BATCH_TIMEOUT", 5))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", 500))
 
 #prometheus metrics port
 CONSUMER_METRICS_PORT = int(os.getenv("CONSUMER_METRICS_PORT", 8000))

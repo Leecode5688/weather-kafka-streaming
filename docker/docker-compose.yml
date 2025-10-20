@@ -104,8 +104,6 @@ services:
         condition: service_healthy
       mongodb:
         condition: service_healthy
-      weather_consumer:
-        condition: service_healthy
     volumes:
       - ../logs:/app/logs
 
