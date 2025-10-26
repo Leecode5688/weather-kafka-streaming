@@ -1,4 +1,44 @@
 services:
+  mongo-config-init:
+    image: mongo:6
+    container_name: mongo-config-init
+    depends_on:
+      - mongo-config-1
+      - mongo-config-2
+      - mongo-config-3
+    entrypoint: >
+      bash -c '
+        echo "Waiting for config servers to be ready..." && sleep 5 &&
+        mongosh --host mongo-config-1 --port 27017 --eval "try { rs.initiate({_id: \"mongo-config-rs\", configsvr: true, members: [{_id: 0, host: \"mongo-config-1:27017\"}, {_id: 1, host: \"mongo-config-2:27017\"}, {_id: 2, host: \"mongo-config-3:27017\"}]}) } catch(e) { print(e); }" &&
+        sleep 2 &&
+        echo "Config server replica set initiated."
+      '
+
+  mongo-shard-1-init:
+    image: mongo:6
+    container_name: mongo-shard-1-init
+    depends_on:
+      - mongo-shard-1-a
+    entrypoint: >
+      bash -c '
+        echo "Waiting for shard 1 to be ready..." && sleep 5 &&
+        mongosh --host mongo-shard-1-a --port 27017 --eval "try { rs.initiate({_id: \"mongo-shard-1-rs\", members: [{_id: 0, host: \"mongo-shard-1-a:27017\"}]}) } catch(e) { print(e); }" &&
+        sleep 2 &&
+        echo "Shard 1 replica set initiated."
+      '
+
+  mongo-shard-2-init:
+    image: mongo:6
+    container_name: mongo-shard-2-init
+    depends_on:
+      - mongo-shard-2-a
+    entrypoint: >
+      bash -c '
+        echo "Waiting for shard 2 to be ready..." && sleep 5 &&
+        mongosh --host mongo-shard-2-a --port 27017 --eval "try { rs.initiate({_id: \"mongo-shard-2-rs\", members: [{_id: 0, host: \"mongo-shard-2-a:27017\"}]}) } catch(e) { print(e); }" &&
+        sleep 2 &&
+        echo "Shard 2 replica set initiated."
+      '
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: zookeeper
@@ -71,20 +111,71 @@ services:
     depends_on:
       - prometheus
 
-  mongodb:
+  mongo-config-1:
     image: mongo:6
-    container_name: mongodb
+    container_name: mongo-config-1
+    command: mongod --port 27017 --configsvr --replSet mongo-config-rs
+    volumes:
+      - mongo_config_1_data:/data/db
+    
+  mongo-config-2:
+    image: mongo:6
+    container_name: mongo-config-2
+    command: mongod --port 27017 --configsvr --replSet mongo-config-rs
+    volumes:
+      - mongo_config_2_data:/data/db
+
+  mongo-config-3:
+    image: mongo:6
+    container_name: mongo-config-3
+    command: mongod --port 27017 --configsvr --replSet mongo-config-rs
+    volumes:
+      - mongo_config_3_data:/data/db
+
+  mongo-shard-1-a:
+    image: mongo:6
+    container_name: mongo-shard-1-a
+    command: mongod --port 27017 --shardsvr --replSet mongo-shard-1-rs
+    volumes: 
+      - mongo_shard_1_data:/data/db
+
+  mongo-shard-2-a:
+    image: mongo:6
+    container_name: mongo-shard-2-a
+    command: mongod --port 27017 --shardsvr --replSet mongo-shard-2-rs
+    volumes: 
+      - mongo_shard_2_data:/data/db
+
+  mongos-router:
+    image: mongo:6
+    container_name: mongos-router
+    command: mongos --port 27017 --configdb mongo-config-rs/mongo-config-1:27017,mongo-config-2:27017,mongo-config-3:27017 --bind_ip_all
     ports:
       - "27017:27017"
+    depends_on:
+      - mongo-config-init
+      - mongo-shard-1-init
+      - mongo-shard-2-init
+
+  mongo-cluster-init:
+    image: mongo:6
+    container_name: mongo-cluster-init
+    depends_on:
+      - mongos-router
     volumes:
-      - mongo_data:/data/db
-    environment:
-      TZ: Asia/Taipei
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.runCommand({ ping: 1})", "--quiet"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      - ../mongo-scripts:/scripts
+    entrypoint: >
+      bash -c '
+        echo "Waiting for mongo router to be available...";
+        for i in {1..30}; do
+          mongosh --host mongos-router --port 27017 --eval "db.adminCommand({ ping: 1 })" && break;
+          echo "mongos-router not ready, retrying in 5s...";
+          sleep 5;
+        done;
+        echo "Running asynchronous initialization script...";
+        mongosh --host mongos-router --port 27017 /scripts/init-mongo.js;
+        echo "MongoDB cluster initialization script executed."
+      '
 
   weather_pipeline:
     build:
@@ -102,8 +193,8 @@ services:
     depends_on:
       kafka: 
         condition: service_healthy
-      mongodb:
-        condition: service_healthy
+      mongo-cluster-init:
+        condition: service_completed_successfully
     volumes:
       - ../logs:/app/logs
 
@@ -118,10 +209,10 @@ services:
       - KAFKA_BROKER=kafka:9092
       - TZ=Asia/Taipei
     depends_on:
-      kafka:
+      kafka: 
         condition: service_healthy
-      mongodb:
-        condition: service_healthy
+      mongo-cluster-init:
+        condition: service_completed_successfully
     volumes:
       - ../logs:/app/logs
     deploy:
@@ -151,24 +242,12 @@ services:
         condition: service_healthy
     volumes:
       - ../logs:/app/logs
-  # stress_test_producer:
-  #   build:
-  #     context: ..
-  #     dockerfile: docker/producer.Dockerfile
-  #   container_name: stress_test_producer
-  #   command: ["python", "-m", "producer_service.stress_test_producer"]
-  #   env_file:
-  #     - ../config/.env
-  #   environment:
-  #     - PYTHONUNBUFFERED=1
-  #     - KAFKA_BROKER=kafka:9092
-  #     - TZ=Asia/Taipei
-  #   depends_on:
-  #     kafka:
-  #       condition: service_healthy
-  #     weather_consumer:
-  #       condition: service_healthy
+
 volumes:
-  mongo_data:
-  logs:
+  mongo_config_1_data:
+  mongo_config_2_data:
+  mongo_config_3_data:
+  mongo_shard_1_data:
+  mongo_shard_2_data:
   grafana_data:
+  logs:

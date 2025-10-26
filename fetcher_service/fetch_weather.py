@@ -15,7 +15,7 @@ API_CALLS_FAILURE = Counter('fetcher_api_calls_failure_total', 'Total failed API
 
 def fetch_weather_data():
     """
-    fetch raw data from cwb taiwan's api, return the json response
+    fetch raw data from cwa taiwan's api, return the json response
     raise exception if the response is not successful
     """
     response = requests.get(API_URL)

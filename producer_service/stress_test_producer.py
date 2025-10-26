@@ -3,7 +3,7 @@ import logging
 import random
 import time
 from datetime import datetime, timezone, timedelta
-from config.config import KAFKA_BROKER, KAFKA_TOPIC
+from config.config import KAFKA_BROKER, KAFKA_RAW_TOPIC
 from kafka import KafkaProducer
 
 logger = logging.getLogger("stress_producer")
@@ -23,7 +23,7 @@ def generate_fake_weather_data():
     taipei_tz = timezone(timedelta(hours=8))
     
     return {
-            "timestamp": time.time(),
+            "fetch_timestamp": time.time(),
             "StationId": station_ids[station_index],
             "StationName": station_names[station_index],
             "ObsTime": {
@@ -42,7 +42,7 @@ def run_stress_test(num_messages=10000):
     try: 
         for i in range(num_messages):
             message = generate_fake_weather_data()
-            producer.send(KAFKA_TOPIC, value = message)
+            producer.send(KAFKA_RAW_TOPIC, value = message)
             
             if (i+1) % 1000 == 0: 
                 logger.info(f"Sent {i+1}/{num_messages} messages...")

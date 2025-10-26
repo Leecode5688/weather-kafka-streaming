@@ -10,7 +10,7 @@ API_URL = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Author
 STATION_IDS_OF_INTEREST = ["C0C730"]
 #how often do we call the API
 FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL", 10))
-RUN_DURATION = int(os.getenv("RUN_DURATION", 600))
+RUN_DURATION = int(os.getenv("RUN_DURATION", 3600))
 
 #mongodb config
 MONGO_URI = os.getenv("MONGO_URI")
@@ -19,6 +19,8 @@ MONGO_COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME")
 
 #kafka config
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
+KAFKA_RAW_TOPIC = os.getenv("KAFKA_RAW_TOPIC", "weather_raw")
+
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "weather_data")
 TIME_OUT = int(os.getenv("TIME_OUT", 600))
 BATCH_TIMEOUT = int(os.getenv("BATCH_TIMEOUT", 5))

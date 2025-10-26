@@ -1,22 +1,43 @@
 import logging
 import os
 import time
+import json
 import threading
 from .fetch_weather import get_weather
-from config.config import FETCH_INTERVAL, FETCHER_METRICS_PORT
+from config.config import FETCH_INTERVAL, FETCHER_METRICS_PORT, KAFKA_BROKER, KAFKA_RAW_TOPIC
 from config.logging_config import setup_logger
 from prometheus_client import start_http_server
+from kafka import KafkaProducer
 
 logger = setup_logger("fetcher_service", "../logs/fetcher.log")
+
+def create_producer():
+    return KafkaProducer(
+        bootstrap_servers=KAFKA_BROKER,
+        api_version=(3, 9),
+        value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+    )
 def run_fetcher():
     logger.info("Starting fetcher service...")
+    producer = create_producer()
     try:
         while True:
             weather_data = get_weather()
             if weather_data:
                 logger.info(f"Fetched {len(weather_data)} weather records")
-                # Optional: print first record for verification
-                logger.debug(f"Sample data: {weather_data[0]}")
+                # # Optional: print first record for verification
+                # logger.debug(f"Sample data: {weather_data[0]}")
+                for entry in weather_data:
+                    try: 
+                        # add fetch timestamp, we can use this to track latency later
+                        entry['fetch_timestamp'] = time.time()
+                        producer.send(KAFKA_RAW_TOPIC, value=entry)
+                    except Exception as e:
+                        logger.error(f"Failed to send raw data to kafka: {e}")
+                
+                producer.flush()
+                logger.info(f"Flushed {len(weather_data)} raw weather records to {KAFKA_RAW_TOPIC}")
+                
             else:
                 logger.warning("No weather data fetched this interval")
 
@@ -24,7 +45,9 @@ def run_fetcher():
 
     except KeyboardInterrupt:
         logger.info("Fetcher service stopped by user.")
-
+    finally: 
+        producer.close()
+        logger.info("Fetcher kafka producer closed.")
 
 if __name__ == "__main__":
     # Start Prometheus metrics server
