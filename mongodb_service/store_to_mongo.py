@@ -21,16 +21,16 @@ def connect_to_mongo():
     db = client[MONGO_DB_NAME]
     collection = db[MONGO_COLLECTION_NAME]
 
-    """
-    compound index, ascending order
-    unique = true
-    ensures that the combination of StationId and ObservationTime is unique
-    """
+    # """
+    # compound index, ascending order
+    # unique = true
+    # ensures that the combination of StationId and ObservationTime is unique
+    # """
 
-    collection.create_index(
-        [("StationId", 1), ("ObservationTime", 1)],
-        unique=True
-    )
+    # collection.create_index(
+    #     [("StationId", 1), ("ObservationTime", 1)],
+    #     unique=True
+    # )
 
     return client, collection
 
