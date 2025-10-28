@@ -9,7 +9,7 @@ from config.logging_config import setup_logger
 from prometheus_client import start_http_server
 from kafka import KafkaProducer
 
-logger = setup_logger("fetcher_service", "../logs/fetcher.log")
+logger = setup_logger("fetcher_service", "logs/fetcher.log")
 
 def create_producer():
     return KafkaProducer(

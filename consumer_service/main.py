@@ -9,7 +9,7 @@ import threading
 if not os.path.exists("../logs"):
     os.makedirs("../logs")
 
-logger = setup_logger("consumer_service", "../logs/consumer.log")
+logger = setup_logger("consumer_service", "logs/consumer.log")
 
 def run_consumer():
     logger.info("Starting the consumer service...")

@@ -7,7 +7,7 @@ from config.logging_config import setup_logger
 from config.config import PRODUCER_METRICS_PORT
 from prometheus_client import start_http_server
 
-logger = setup_logger("producer_service", "../logs/producer.log")
+logger = setup_logger("producer_service", "logs/producer.log")
 
 def run_producer():
     logger.info("Starting the producer service...")
