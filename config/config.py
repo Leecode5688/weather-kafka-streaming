@@ -19,9 +19,15 @@ MONGO_COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME")
 
 #kafka config
 KAFKA_BROKER = os.getenv("KAFKA_BROKER", "localhost:9092")
-KAFKA_RAW_TOPIC = os.getenv("KAFKA_RAW_TOPIC", "weather_raw")
 
+#pipeline 1: raw fetcher => processor
+KAFKA_RAW_TOPIC = os.getenv("KAFKA_RAW_TOPIC", "weather_raw")
+KAFKA_PIPELINE_DLQ_TOPIC = os.getenv("KAFKA_PIPELINE_DLQ_TOPIC", "weather_raw_dlq")
+
+#pipeline 2: processor => consumer
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "weather_data")
+KAFKA_CONSUMER_DLQ_TOPIC = os.getenv("KAFKA_CONSUMER_DLQ_TOPIC", "weather_data_dlq")
+
 TIME_OUT = int(os.getenv("TIME_OUT", 600))
 BATCH_TIMEOUT = int(os.getenv("BATCH_TIMEOUT", 5))
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", 500))

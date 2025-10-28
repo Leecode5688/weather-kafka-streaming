@@ -1,5 +1,5 @@
-from kafka import KafkaConsumer
-from config.config import KAFKA_BROKER, KAFKA_TOPIC, BATCH_SIZE, BATCH_TIMEOUT
+from kafka import KafkaProducer, KafkaConsumer
+from config.config import KAFKA_BROKER, KAFKA_TOPIC, KAFKA_CONSUMER_DLQ_TOPIC, BATCH_SIZE, BATCH_TIMEOUT
 from mongodb_service.store_to_mongo import connect_to_mongo, close_connection, store_weather_batch
 from prometheus_client import Counter, Histogram
 import json
@@ -18,12 +18,18 @@ MESSAGES_LATENCY = Histogram(
     'End-to-end latency of messages based on timestamp field'
 )
 
+#producer for sending to DLQ
+def create_producer():
+    return KafkaProducer(
+        bootstrap_servers=KAFKA_BROKER,
+        api_version=(3, 9),
+    )
+
 def create_consumer():
     return KafkaConsumer(
         KAFKA_TOPIC,
         bootstrap_servers=KAFKA_BROKER,
         api_version=(3, 9),
-        value_deserializer=lambda x: json.loads(x.decode('utf-8')),
         auto_offset_reset='latest',
         enable_auto_commit=False,
         group_id='weather-consumer-group',
@@ -53,6 +59,7 @@ def flush_batch(consumer, collection, batch):
         return 0
 
 def batch_consume_weather_data():
+    dlq_producer = create_producer()
     consumer = create_consumer()
     logger.info(f"Starting to consume messages from Kafka topic: {KAFKA_TOPIC}")
 
@@ -83,23 +90,36 @@ def batch_consume_weather_data():
 
             for topic_partition, records in messages.items():
                 for record in records:
-                    data = record.value
+                    try: 
+                        data_str = record.value.decode('utf-8')
+                        data = json.loads(data_str)
+                        # data = record.value
 
-                    # Handle latency using payload timestamp if present
-                    if isinstance(data, dict) and data.get('timestamp'):
-                        try:
-                            latency_seconds = time.time() - float(data['timestamp'])
-                            if latency_seconds >= 0:
-                                MESSAGES_LATENCY.observe(latency_seconds)
-                        except (TypeError, ValueError):
-                            logger.warning(f"Invalid timestamp format in message: {data.get('timestamp')}")
-
-                    # Add to batch if valid
-                    if isinstance(data, dict):
+                        # Handle latency using payload timestamp if present
+                        if isinstance(data, dict) and data.get('timestamp'):
+                            try:
+                                latency_seconds = time.time() - float(data['timestamp'])
+                                if latency_seconds >= 0:
+                                    MESSAGES_LATENCY.observe(latency_seconds)
+                            except (TypeError, ValueError):
+                                logger.warning(f"Invalid timestamp format in message: {data.get('timestamp')}")
+                        if not isinstance(data, dict):
+                            raise ValueError(f"Unexpected message format: {data}")
+                    
+                        #we can check for required fields here
+                        if 'StationId' not in data or 'ObsTime' not in data:
+                            raise ValueError(f"Missing required fields in data: {data}")
+                    
+                        # Add to batch if valid
                         batch.append(data)
-                    else:
-                        logger.warning(f"Unexpected message format: {data}")
-
+                        
+                    except Exception as validation_error:   
+                        logger.error(f"Validation failed for record, sending to DLQ: {validation_error}") 
+                        try:
+                            dlq_producer.send(KAFKA_CONSUMER_DLQ_TOPIC, value=record.value)                
+                        except Exception as dlq_e:
+                            logger.critical(f"Critical error: Failed to send message to DLQ: {KAFKA_CONSUMER_DLQ_TOPIC}, error: {dlq_e}")
+                    
                     # Flush if batch is full
                     if len(batch) >= BATCH_SIZE:
                         flushed = flush_batch(consumer, collection, batch)
@@ -118,7 +138,8 @@ def batch_consume_weather_data():
             if flushed > 0:
                 batch.clear()
 
+        dlq_producer.close()
         consumer.close()
-        logger.info("Kafka consumer closed.")
+        logger.info("Kafka DLQ producer and consumer closed.")
         if mongo_client:
             close_connection(mongo_client)
