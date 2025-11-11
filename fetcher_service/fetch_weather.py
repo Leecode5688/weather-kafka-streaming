@@ -3,6 +3,7 @@ from config.config import API_URL, STATION_IDS_OF_INTEREST
 from prometheus_client import Counter
 import requests
 import logging
+import httpx
 import json
 import os
 
@@ -23,6 +24,11 @@ def fetch_weather_data():
     return response.json()
 
 
+async def fetch_weather_data_async(client: httpx.AsyncClient, api_url: str):
+    response = await client.get(api_url)
+    response.raise_for_status()
+    return response.json()
+        
 def filter_and_save_data(raw_data, station_ids_of_interest):
     """
     filter the result and construct the data
@@ -65,3 +71,11 @@ def get_weather():
         API_CALLS_FAILURE.inc()
         return []
     
+async def get_weather_async(client: httpx.AsyncClient, api_url: str):
+    try:
+        raw_data = await fetch_weather_data_async(client, api_url)
+        filtered_data = filter_and_save_data(raw_data, STATION_IDS_OF_INTEREST)
+        return filtered_data
+    except httpx.RequestError as e: 
+        logging.error(f"Error fetching data from API: {e}")
+        return []
