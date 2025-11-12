@@ -1,11 +1,7 @@
-# from kafka import KafkaProducer, KafkaConsumer
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 from config.config import (
     KAFKA_BROKER, KAFKA_TOPIC, KAFKA_CONSUMER_DLQ_TOPIC, BATCH_SIZE, BATCH_TIMEOUT
 )
-# from mongodb_service.store_to_mongo import (
-#     connect_to_mongo, close_connection, store_weather_batch
-# )
 from prometheus_client import Counter, Histogram
 from pymongo.operations import UpdateOne
 from mongodb_service.store_to_mongo import (

@@ -2,19 +2,21 @@ import json
 import logging
 import random
 import time
+import asyncio
 from datetime import datetime, timezone, timedelta
 from config.config import KAFKA_BROKER, KAFKA_RAW_TOPIC
-from kafka import KafkaProducer
+from aiokafka import AIOKafkaProducer
+# from kafka import KafkaProducer
 
 logger = logging.getLogger("stress_producer")
 logging.basicConfig(level=logging.INFO)
 
 def create_producer():
-    return KafkaProducer(
-        bootstrap_servers=KAFKA_BROKER, 
-        api_version=(3, 9),
-        value_serializer=lambda v : json.dumps(v).encode('utf-8'),
+    return AIOKafkaProducer(
+        bootstrap_servers=KAFKA_BROKER,
+        value_serializer=lambda v: json.dumps(v).encode('utf-8'),
     )
+    
     
 def generate_fake_weather_data():
     station_ids = ["FA001", "FA002", "FA003", "FA004", "FA005"]
@@ -36,23 +38,33 @@ def generate_fake_weather_data():
             }
         }
     
-def run_stress_test(num_messages=10000):
+async def run_stress_test(num_messages=10000):
     producer = create_producer()
     logger.info(f"Starting stress test, preparing to send {num_messages} messages. ")
+    
+    await producer.start()
+    tasks = []
+    
     try: 
         for i in range(num_messages):
             message = generate_fake_weather_data()
-            producer.send(KAFKA_RAW_TOPIC, value = message)
+            tasks.append(
+                producer.send(KAFKA_RAW_TOPIC, value=message)
+            )
             
             if (i+1) % 1000 == 0: 
-                logger.info(f"Sent {i+1}/{num_messages} messages...")
-                
+                logger.info(f"Prepared {i+1}/{num_messages} messages...")
+        
+        logger.info("Sending all messages to Kafka...")
+        await asyncio.gather(*tasks)
+        
     except Exception as e:
         logger.error(f"An error occurred: {e}")
     finally:
-        producer.flush()
-        producer.close()
+        await producer.stop()
         logger.info(f"Stress test finished! Sent {num_messages} messages...")
 
 if __name__ == "__main__":
-    run_stress_test()
+    asyncio.run(run_stress_test())
+    
+    
