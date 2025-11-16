@@ -9,18 +9,19 @@ import httpx
 from .fetch_weather import get_weather, get_weather_async
 from config.config import FETCH_INTERVAL, FETCHER_METRICS_PORT, KAFKA_BROKER, KAFKA_RAW_TOPIC, API_URL
 from config.logging_config import setup_logger
+
+from config.telemetry import setup_otel
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.aiokafka import AIOKafkaInstrumentor
+from opentelemetry import trace
+
 from prometheus_client import start_http_server
 from aiokafka import AIOKafkaProducer
 # from kafka import KafkaProducer
 
 logger = setup_logger("fetcher_service", "logs/fetcher.log")
 
-# def create_producer():
-#     return KafkaProducer(
-#         bootstrap_servers=KAFKA_BROKER,
-#         api_version=(3, 9),
-#         value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-#     )
+tracer = trace.get_tracer(__name__)
 
 def create_producer():
     return AIOKafkaProducer(
@@ -63,7 +64,7 @@ def run_fetcher():
 async def run_fetcher_async():
     logger.info("Starting async fetcher service...")
     producer = create_producer()
-    
+        
     async with httpx.AsyncClient() as client:
         await producer.start()
         logger.info("AIOKafkaProducer started...")
@@ -102,6 +103,11 @@ async def run_fetcher_async():
             
                 
 if __name__ == "__main__":
+    
+    setup_otel("fetcher_service")
+    AIOKafkaInstrumentor().instrument()
+    HTTPXClientInstrumentor().instrument()
+
     # Start Prometheus metrics server
     threading.Thread(target=lambda: start_http_server(FETCHER_METRICS_PORT), daemon=True).start()
     logger.info(f"Prometheus metrics server started on port {FETCHER_METRICS_PORT}")

@@ -1,6 +1,10 @@
 from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
 from config.config import KAFKA_BROKER, KAFKA_TOPIC, KAFKA_RAW_TOPIC, KAFKA_PIPELINE_DLQ_TOPIC, FETCH_INTERVAL, RUN_DURATION
 from prometheus_client import Counter
+
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
+
 import asyncio
 import logging
 import json
@@ -9,6 +13,8 @@ import time
 #consume from KAFKA_RAW_TOPIC, transform data, and produce to KAFKA_TOPIC
 
 logger = logging.getLogger("producer_service.kafka_producer")
+
+tracer = trace.get_tracer(__name__)
 
 MESSAGES_PRODUCED = Counter('producer_messages_sent_total', 'Total messages sent to Kafka')
 
@@ -61,39 +67,50 @@ async def send_weather_data():
                 tasks_to_dlq = []
                 
                 for record in records:
-                    try:
-                        data_str = record.value.decode('utf-8')
-                        data = json.loads(data_str)
-                        
-                        #validate the data        
-                        if not isinstance(data, dict):
-                            raise ValueError(f"Invalid data format received: {data}")
-                        if 'fetch_timestamp' not in data:
-                            raise ValueError(f"Missing 'fetch_timestamp' in data: {data}")
-                        
-                        data['timestamp'] = data.pop('fetch_timestamp')
-                        data['processing_timestamp'] = time.time()
-                        
-                        # try:
-                        #     await producer.send(KAFKA_TOPIC, value=data)
-                        #     MESSAGES_PRODUCED.inc()
-                        # except Exception as e:
-                        #     logger.error(f"Failed to send processed data to kafka: {e}")
-                        
-                        tasks_to_send.append(
-                            producer.send(KAFKA_TOPIC, value=data)
-                        )
-                        
-                    except Exception as validation_error:
-                        logger.error(f"Validation error for message, sending to DLQ: {validation_error}")
-                        tasks_to_dlq.append(
-                            dlq_producer.send(KAFKA_PIPELINE_DLQ_TOPIC, value=record.value)
-                        )
-                        # try:
-                        #     await dlq_producer.send(KAFKA_PIPELINE_DLQ_TOPIC, value=record.value)
-                        # except Exception as dlq_e:
-                        #     logger.critical(f"Critical error: Failed to send message to DLQ: {KAFKA_PIPELINE_DLQ_TOPIC}")
-                
+                    
+                    with tracer.start_as_current_span("process_raw_message") as span:
+                        try:
+                            
+                            span.set_attribute("kafka.topic", record.topic)
+                            span.set_attribute("kafka.partition", record.partition)
+                            span.set_attribute("kafka.offset", record.offset)
+                            
+                            data_str = record.value.decode('utf-8')
+                            data = json.loads(data_str)
+                            
+                            #validate the data        
+                            if not isinstance(data, dict):
+                                raise ValueError(f"Invalid data format received: {data}")
+                            if 'fetch_timestamp' not in data:
+                                raise ValueError(f"Missing 'fetch_timestamp' in data: {data}")
+                            
+                            data['timestamp'] = data.pop('fetch_timestamp')
+                            data['processing_timestamp'] = time.time()
+                            
+                            # try:
+                            #     await producer.send(KAFKA_TOPIC, value=data)
+                            #     MESSAGES_PRODUCED.inc()
+                            # except Exception as e:
+                            #     logger.error(f"Failed to send processed data to kafka: {e}")
+                            
+                            tasks_to_send.append(
+                                producer.send(KAFKA_TOPIC, value=data)
+                            )
+                            
+                        except Exception as validation_error:
+                            
+                            span.record_exception(validation_error)
+                            span.set_status(Status(StatusCode.ERROR, str(validation_error)))
+                            
+                            logger.error(f"Validation error for message, sending to DLQ: {validation_error}")
+                            tasks_to_dlq.append(
+                                dlq_producer.send(KAFKA_PIPELINE_DLQ_TOPIC, value=record.value)
+                            )
+                            # try:
+                            #     await dlq_producer.send(KAFKA_PIPELINE_DLQ_TOPIC, value=record.value)
+                            # except Exception as dlq_e:
+                            #     logger.critical(f"Critical error: Failed to send message to DLQ: {KAFKA_PIPELINE_DLQ_TOPIC}")
+                    
                 if tasks_to_send:
                     await asyncio.gather(*tasks_to_send)
                     MESSAGES_PRODUCED.inc(len(tasks_to_send))

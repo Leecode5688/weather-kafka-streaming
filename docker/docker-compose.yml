@@ -64,6 +64,7 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 6
       TZ: Asia/Taipei
     depends_on:
       - zookeeper
@@ -110,10 +111,21 @@ services:
     environment:
       TZ: Asia/Taipei
     volumes: 
-      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
     depends_on:
       - prometheus
 
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - TZ=Asia/Taipei
   mongo-config-1:
     image: mongo:6
     container_name: mongo-config-1
@@ -184,9 +196,6 @@ services:
     build:
       context: ..
       dockerfile: docker/producer.Dockerfile
-    container_name: weather_pipeline
-    ports:
-      - "8001:8001"
     env_file:
       - ../config/.env
     environment:
@@ -198,8 +207,12 @@ services:
         condition: service_healthy
       mongo-cluster-init:
         condition: service_completed_successfully
+      jaeger:
+        condition: service_started
     volumes:
       - ../logs:/app/logs
+    deploy:
+      replicas: 3
 
   weather_consumer:
     build:
@@ -216,10 +229,12 @@ services:
         condition: service_healthy
       mongo-cluster-init:
         condition: service_completed_successfully
+      jaeger:
+        condition: service_started
     volumes:
       - ../logs:/app/logs
     deploy:
-      replicas: 1
+      replicas: 3
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000"]
       interval: 30s
@@ -243,6 +258,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      jaeger:
+        condition: service_started
     volumes:
       - ../logs:/app/logs
 
@@ -252,5 +269,4 @@ volumes:
   mongo_config_3_data:
   mongo_shard_1_data:
   mongo_shard_2_data:
-  grafana_data:
   logs:

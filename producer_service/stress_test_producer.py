@@ -2,9 +2,14 @@ import json
 import logging
 import random
 import time
+import os
 import asyncio
 from datetime import datetime, timezone, timedelta
 from config.config import KAFKA_BROKER, KAFKA_RAW_TOPIC
+
+from config.telemetry import setup_otel
+from opentelemetry.instrumentation.aiokafka import AIOKafkaInstrumentor
+
 from aiokafka import AIOKafkaProducer
 # from kafka import KafkaProducer
 
@@ -65,6 +70,10 @@ async def run_stress_test(num_messages=10000):
         logger.info(f"Stress test finished! Sent {num_messages} messages...")
 
 if __name__ == "__main__":
+    
+    setup_otel("stress_test_producer")
+    AIOKafkaInstrumentor().instrument()
+    
     asyncio.run(run_stress_test())
     
     
