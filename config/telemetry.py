@@ -1,6 +1,10 @@
 import os
 import logging
 from opentelemetry import trace
+
+from opentelemetry import propagate
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -24,6 +28,8 @@ def setup_otel(service_name: str):
         provider = TracerProvider(resource=resource)
         provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
         trace.set_tracer_provider(provider)
+        
+        propagate.set_text_map_propagator(TraceContextTextMapPropagator())
         
         logger.info(f"OpenTelemetry tracing set up for service: {service_name} and exporting to {otlp_endpoint}")
             

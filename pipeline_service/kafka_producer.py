@@ -87,12 +87,6 @@ async def send_weather_data():
                             data['timestamp'] = data.pop('fetch_timestamp')
                             data['processing_timestamp'] = time.time()
                             
-                            # try:
-                            #     await producer.send(KAFKA_TOPIC, value=data)
-                            #     MESSAGES_PRODUCED.inc()
-                            # except Exception as e:
-                            #     logger.error(f"Failed to send processed data to kafka: {e}")
-                            
                             tasks_to_send.append(
                                 producer.send(KAFKA_TOPIC, value=data)
                             )
@@ -106,11 +100,7 @@ async def send_weather_data():
                             tasks_to_dlq.append(
                                 dlq_producer.send(KAFKA_PIPELINE_DLQ_TOPIC, value=record.value)
                             )
-                            # try:
-                            #     await dlq_producer.send(KAFKA_PIPELINE_DLQ_TOPIC, value=record.value)
-                            # except Exception as dlq_e:
-                            #     logger.critical(f"Critical error: Failed to send message to DLQ: {KAFKA_PIPELINE_DLQ_TOPIC}")
-                    
+
                 if tasks_to_send:
                     await asyncio.gather(*tasks_to_send)
                     MESSAGES_PRODUCED.inc(len(tasks_to_send))

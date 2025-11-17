@@ -6,7 +6,7 @@ scrape_configs:
     static_configs: 
       - targets: ['weather_consumer:8000']
   
-  - job_name: 'weather_producer'
+  - job_name: 'weather_pipeline'
     static_configs:
       - targets: ['weather_pipeline:8001']
   

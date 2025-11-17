@@ -1,25 +1,25 @@
-import json
 import logging
+import json
 import random
 import time
 import os
 import asyncio
+import argparse
 from datetime import datetime, timezone, timedelta
-from config.config import KAFKA_BROKER, KAFKA_RAW_TOPIC
-
+from config.config import KAFKA_BROKER, KAFKA_RAW_TOPIC 
 from config.telemetry import setup_otel
 from opentelemetry.instrumentation.aiokafka import AIOKafkaInstrumentor
-
 from aiokafka import AIOKafkaProducer
-# from kafka import KafkaProducer
 
 logger = logging.getLogger("stress_producer")
 logging.basicConfig(level=logging.INFO)
 
 def create_producer():
+    logger.info(f"Connecting to Kafka Broker at: {KAFKA_BROKER}") 
     return AIOKafkaProducer(
         bootstrap_servers=KAFKA_BROKER,
         value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+        request_timeout_ms=60000 
     )
     
     
@@ -43,9 +43,9 @@ def generate_fake_weather_data():
             }
         }
     
-async def run_stress_test(num_messages=10000):
+async def run_stress_test(num_messages):
     producer = create_producer()
-    logger.info(f"Starting stress test, preparing to send {num_messages} messages. ")
+    logger.info(f"Starting stress test, preparing to send {num_messages} messages in batches...")
     
     await producer.start()
     tasks = []
@@ -57,11 +57,10 @@ async def run_stress_test(num_messages=10000):
                 producer.send(KAFKA_RAW_TOPIC, value=message)
             )
             
-            if (i+1) % 1000 == 0: 
-                logger.info(f"Prepared {i+1}/{num_messages} messages...")
-        
-        logger.info("Sending all messages to Kafka...")
-        await asyncio.gather(*tasks)
+            if (i + 1) % 1000 == 0 or (i + 1) == num_messages:
+                logger.info(f"Sending batch ending at message {i + 1}/{num_messages}...")
+                await asyncio.gather(*tasks) 
+                tasks.clear() 
         
     except Exception as e:
         logger.error(f"An error occurred: {e}")
@@ -71,9 +70,17 @@ async def run_stress_test(num_messages=10000):
 
 if __name__ == "__main__":
     
+    parser = argparse.ArgumentParser(description="Kafka stress test producer.")
+    parser.add_argument(
+        "num_messages", 
+        type=int, 
+        nargs="?",
+        default=10000,
+        help="The number of messages to send (default: 10000)"
+    )
+    args = parser.parse_args()
+
     setup_otel("stress_test_producer")
     AIOKafkaInstrumentor().instrument()
     
-    asyncio.run(run_stress_test())
-    
-    
+    asyncio.run(run_stress_test(args.num_messages))

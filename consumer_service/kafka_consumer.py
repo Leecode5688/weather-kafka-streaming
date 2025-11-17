@@ -9,10 +9,8 @@ from mongodb_service.store_to_mongo import (
     store_weather_batch_async,
     close_connection
 )
-
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-
 import logging
 import asyncio
 import json
@@ -37,46 +35,6 @@ MONGO_WRITE_LATENCY = Histogram(
     'Time spent writing batches to MongoDB'
 )
 
-#producer for sending to DLQ
-def create_producer():
-    return KafkaProducer(
-        bootstrap_servers=KAFKA_BROKER,
-        api_version=(3, 9),
-    )
-
-def create_consumer():
-    return KafkaConsumer(
-        KAFKA_TOPIC,
-        bootstrap_servers=KAFKA_BROKER,
-        api_version=(3, 9),
-        auto_offset_reset='latest',
-        enable_auto_commit=False,
-        group_id='weather-consumer-group',
-        max_poll_records=5000
-    )
-
-def flush_batch(consumer, collection, batch):
-    """
-    Helper function to write batch to MongoDB and commit offsets.
-    Also increments Prometheus counters accordingly.
-    """
-    if not batch:
-        return 0
-
-    try:
-        if store_weather_batch(collection, batch):
-            consumer.commit()
-            batch_size = len(batch)
-            MESSAGES_CONSUMED.inc(batch_size)
-            logger.info(f"Flushed and committed batch of {batch_size} records.")
-            return batch_size
-        else:
-            logger.error("Failed to store batch to MongoDB, offset not committed.")
-            return 0
-    except Exception as e:
-        logger.error(f"Error flushing batch: {e}")
-        return 0
-    
 async def flush_batch_async(consumer, collection, operations):
     if not operations:
         return 0
@@ -102,93 +60,6 @@ async def flush_batch_async(consumer, collection, operations):
             span.set_status(Status(StatusCode.ERROR, str(e)))
             logger.error(f"Error flushing async batch: {e}")
             return 0    
-        
-def batch_consume_weather_data():
-    dlq_producer = create_producer()
-    consumer = create_consumer()
-    logger.info(f"Starting to consume messages from Kafka topic: {KAFKA_TOPIC}")
-
-    mongo_client = None
-    try:
-        mongo_client, collection = connect_to_mongo()
-        logger.info("MongoDB connection established and collection ready.")
-    except Exception as e:
-        logger.error(f"Error establishing MongoDB connection: {e}")
-        return
-
-    batch = []
-    batch_start_time = time.time()
-
-    try:
-        while True:
-            messages = consumer.poll(timeout_ms=1000)
-            now = time.time()
-
-            # If no messages but there's a batch waiting too long, flush it
-            if not messages:
-                if batch and (now - batch_start_time > BATCH_TIMEOUT):
-                    flushed = flush_batch(consumer, collection, batch)
-                    if flushed > 0:
-                        batch.clear()
-                        batch_start_time = now
-                continue
-
-            for topic_partition, records in messages.items():
-                for record in records:
-                    try: 
-                        data_str = record.value.decode('utf-8')
-                        data = json.loads(data_str)
-                        # data = record.value
-
-                        # Handle latency using payload timestamp if present
-                        if isinstance(data, dict) and data.get('timestamp'):
-                            try:
-                                latency_seconds = time.time() - float(data['timestamp'])
-                                if latency_seconds >= 0:
-                                    MESSAGES_LATENCY.observe(latency_seconds)
-                            except (TypeError, ValueError):
-                                logger.warning(f"Invalid timestamp format in message: {data.get('timestamp')}")
-                        if not isinstance(data, dict):
-                            raise ValueError(f"Unexpected message format: {data}")
-                    
-                        #we can check for required fields here
-                        if 'StationId' not in data or 'ObsTime' not in data:
-                            raise ValueError(f"Missing required fields in data: {data}")
-                    
-                        # Add to batch if valid
-                        batch.append(data)
-                        
-                    except Exception as validation_error:   
-                        logger.error(f"Validation failed for record, sending to DLQ: {validation_error}") 
-                        try:
-                            dlq_producer.send(KAFKA_CONSUMER_DLQ_TOPIC, value=record.value)                
-                        except Exception as dlq_e:
-                            logger.critical(f"Critical error: Failed to send message to DLQ: {KAFKA_CONSUMER_DLQ_TOPIC}, error: {dlq_e}")
-                    
-                    # Flush if batch is full
-                    if len(batch) >= BATCH_SIZE:
-                        flushed = flush_batch(consumer, collection, batch)
-                        if flushed > 0:
-                            batch.clear()
-                            batch_start_time = time.time()
-
-    except KeyboardInterrupt:
-        logger.info("Consumer interrupted by user.")
-    except Exception as e:
-        logger.error(f"Error occurred: {e}")
-    finally:
-        # Flush remaining messages on exit
-        if batch:
-            flushed = flush_batch(consumer, collection, batch)
-            if flushed > 0:
-                batch.clear()
-
-        dlq_producer.close()
-        consumer.close()
-        logger.info("Kafka DLQ producer and consumer closed.")
-        if mongo_client:
-            close_connection(mongo_client)
-
 
 async def batch_consume_weather_data_async():
 
@@ -204,7 +75,6 @@ async def batch_consume_weather_data_async():
         max_poll_records=5000
     )
 
-    
     logger.info(f"Starting to consume messages from Kafka topic: {KAFKA_TOPIC}")
 
     mongo_client = None

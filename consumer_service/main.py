@@ -1,29 +1,18 @@
 import logging
 import asyncio
 import os
-from .kafka_consumer import batch_consume_weather_data
 from .kafka_consumer import batch_consume_weather_data_async
 from config.logging_config import setup_logger
 from config.config import CONSUMER_METRICS_PORT
 from prometheus_client import start_http_server
-
 from config.telemetry import setup_otel
 from opentelemetry.instrumentation.aiokafka import AIOKafkaInstrumentor
-
 import threading
-
 
 if not os.path.exists("../logs"):
     os.makedirs("../logs")
 
 logger = setup_logger("consumer_service", "logs/consumer.log")
-
-def run_consumer():
-    logger.info("Starting the consumer service...")
-    try:
-        batch_consume_weather_data()
-    except KeyboardInterrupt:
-        logger.info("Consumer service stopped...")
 
 async def run_consumer_async():
     logger.info("Starting the async consumer service...")
