@@ -65,30 +65,29 @@ In the `config/` directory, create a file named `.env`. Copy the following conte
     
     ```
     CWB_API_KEY=<Your_CWA_API_Key>
+
 	FETCH_INTERVAL=600
 	RUN_DURATION=3600
-
-	MONGO_URI=mongodb://mongos-router:27017/
+	MONGO_URI=mongodb://mongos-router:27017,mongos-router-2:27017/
 	MONGO_DB_NAME=weather_db
 	MONGO_COLLECTION_NAME=weather_data
-
 	KAFKA_BROKER=kafka:9092
 	KAFKA_TOPIC=weather_data
 	KAFKA_RAW_TOPIC=weather_raw
-
 	KAFKA_PIPELINE_DLQ_TOPIC=weather_raw_dlq
 	KAFKA_CONSUMER_DLQ_TOPIC=weather_data_dlq
 
 	TIME_OUT=1800
 	BATCH_TIMEOUT=5
 	BATCH_SIZE=500
-
 	LOG_FILE=logs/pipeline.log
 	LOG_LEVEL=INFO
 
 	CONSUMER_METRICS_PORT=8000
 	PRODUCER_METRICS_PORT=8001
 	FETCHER_METRICS_PORT=8002
+
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
 
     ```
 
@@ -107,6 +106,7 @@ In the `config/` directory, create a file named `.env`. Copy the following conte
 - Kafka UI: `http://localhost:8080`
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3000` (login: `admin`/`admin`)
+- Jaeger UI: `http://localhost:16686`
 - MongoDB: Connect at `mongodb://localhost:27017`
 
 ### Verify Data in MongoDB Shell

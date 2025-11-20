@@ -42,18 +42,19 @@ services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.6.0
     container_name: zookeeper
-    ports:
-      - "2181:2181"
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+      KAFKA_HEAP_OPTS: "-Xmx256M -Xms256M"
       TZ: Asia/Taipei
+    deploy:
+      resources:
+        limits:
+          memory: 350M
 
   kafka-1:
     image: confluentinc/cp-kafka:7.6.0
     container_name: kafka-1
-    ports:
-      - "9093:9093"
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -64,7 +65,12 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_NUM_PARTITIONS: 6
+      KAFKA_HEAP_OPTS: "-Xmx512M -Xms512M"
       TZ: Asia/Taipei
+    deploy:
+      resources:
+        limits:
+          memory: 800M
     depends_on:
       - zookeeper
     healthcheck:
@@ -77,8 +83,6 @@ services:
   kafka-2:
     image: confluentinc/cp-kafka:7.6.0
     container_name: kafka-2
-    ports:
-      - "9094:9094"
     environment:
       KAFKA_BROKER_ID: 2
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -89,9 +93,14 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_NUM_PARTITIONS: 6
+      KAFKA_HEAP_OPTS: "-Xmx512M -Xms512M"
       TZ: Asia/Taipei
     depends_on:
       - zookeeper
+    deploy:
+      resources:
+        limits:
+          memory: 800M
     healthcheck:
       test: ["CMD-SHELL", "kafka-consumer-groups --bootstrap-server localhost:9092 --list"]
       interval: 30s
@@ -102,8 +111,6 @@ services:
   kafka-3:
     image: confluentinc/cp-kafka:7.6.0
     container_name: kafka-3
-    ports:
-      - "9095:9095"
     environment:
       KAFKA_BROKER_ID: 3
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -114,9 +121,14 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
       KAFKA_NUM_PARTITIONS: 6
+      KAFKA_HEAP_OPTS: "-Xmx512M -Xms512M"
       TZ: Asia/Taipei
     depends_on:
       - zookeeper
+    deploy:
+      resources:
+        limits:
+          memory: 800M
     healthcheck:
       test: ["CMD-SHELL", "kafka-consumer-groups --bootstrap-server localhost:9092 --list"]
       interval: 30s
@@ -128,7 +140,7 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: kafka_ui
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:9092, kafka-2:9092, kafka-3:9092
@@ -144,7 +156,7 @@ services:
     image: prom/prometheus:latest
     container_name: prometheus
     ports: 
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     command: 
@@ -153,12 +165,16 @@ services:
       - weather_consumer
       - weather_pipeline
       - weather_fetcher
+    deploy:
+      resources:
+        limits:
+          memory: 600M  
   
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       TZ: Asia/Taipei
     volumes: 
@@ -172,17 +188,26 @@ services:
     image: jaegertracing/all-in-one:latest
     container_name: jaeger
     ports:
-      - "16686:16686"
-      - "4317:4317"
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:4317:4317"
     environment:
       - COLLECTOR_OTLP_ENABLED=true
       - TZ=Asia/Taipei
+      - MEMORY_MAX_TRACES=10000
+    deploy:
+      resources:
+        limits:
+          memory: 512M
   mongo-config-1:
     image: mongo:6
     container_name: mongo-config-1
     command: mongod --port 27017 --configsvr --replSet mongo-config-rs
     volumes:
       - mongo_config_1_data:/data/db
+    deploy:
+      resources:
+        limits:
+          memory: 300M
     
   mongo-config-2:
     image: mongo:6
@@ -190,6 +215,10 @@ services:
     command: mongod --port 27017 --configsvr --replSet mongo-config-rs
     volumes:
       - mongo_config_2_data:/data/db
+    deploy:
+      resources:
+        limits:
+          memory: 300M
 
   mongo-config-3:
     image: mongo:6
@@ -197,6 +226,10 @@ services:
     command: mongod --port 27017 --configsvr --replSet mongo-config-rs
     volumes:
       - mongo_config_3_data:/data/db
+    deploy:
+      resources:
+        limits:
+          memory: 300M
 
   mongo-shard-1-a:
     image: mongo:6
@@ -204,6 +237,10 @@ services:
     command: mongod --port 27017 --shardsvr --replSet mongo-shard-1-rs
     volumes: 
       - mongo_shard_1_data:/data/db
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   mongo-shard-2-a:
     image: mongo:6
@@ -211,23 +248,46 @@ services:
     command: mongod --port 27017 --shardsvr --replSet mongo-shard-2-rs
     volumes: 
       - mongo_shard_2_data:/data/db
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   mongos-router:
     image: mongo:6
     container_name: mongos-router
     command: mongos --port 27017 --configdb mongo-config-rs/mongo-config-1:27017,mongo-config-2:27017,mongo-config-3:27017 --bind_ip_all
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     depends_on:
       - mongo-config-init
       - mongo-shard-1-init
       - mongo-shard-2-init
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+
+  mongos-router-2:
+    image: mongo:6
+    container_name: mongos-router-2
+    command: mongos --port 27017 --configdb mongo-config-rs/mongo-config-1:27017,mongo-config-2:27017,mongo-config-3:27017 --bind_ip_all
+    depends_on:
+      - mongo-config-init
+      - mongo-shard-1-init
+      - mongo-shard-2-init
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+
 
   mongo-cluster-init:
     image: mongo:6
     container_name: mongo-cluster-init
     depends_on:
       - mongos-router
+      - mongos-router-2
     volumes:
       - ../mongo-scripts:/scripts
     entrypoint: >
@@ -254,7 +314,6 @@ services:
       - KAFKA_BROKER=kafka-1:9092,kafka-2:9092,kafka-3:9092
       - TZ=Asia/Taipei
     entrypoint: ["/bin/sh", "-c", "echo 'Waiting 10s for kafka cluster to stabilize....' && sleep 10 && python -m pipeline_service.main"]
-
     depends_on:
       kafka-1: 
         condition: service_healthy
@@ -266,10 +325,18 @@ services:
         condition: service_completed_successfully
       jaeger:
         condition: service_started
+      mongos-router:
+        condition: service_started
+      mongos-router-2:
+        condition: service_started
     volumes:
       - ../logs:/app/logs
     deploy:
       replicas: 3
+      resources:
+        limits:
+          cpus: '0.75'
+          memory: 300M
 
   weather_consumer:
     build:
@@ -294,10 +361,18 @@ services:
         condition: service_completed_successfully
       jaeger:
         condition: service_started
+      mongos-router:
+        condition: service_started
+      mongos-router-2:
+        condition: service_started
     volumes:
       - ../logs:/app/logs
     deploy:
       replicas: 6
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 256M
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000"]
       interval: 30s
@@ -309,8 +384,6 @@ services:
     build:
       context: ..
       dockerfile: docker/fetcher.Dockerfile
-    ports:
-      - "8002:8002"
     container_name: weather_fetcher
     env_file:
       - ../config/.env
@@ -330,7 +403,10 @@ services:
         condition: service_started
     volumes:
       - ../logs:/app/logs
-
+    deploy:
+      resources:
+        limits:
+          memory: 200M
 volumes:
   mongo_config_1_data:
   mongo_config_2_data:

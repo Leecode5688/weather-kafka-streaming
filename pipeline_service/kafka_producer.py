@@ -4,6 +4,8 @@ from prometheus_client import Counter
 
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+from opentelemetry.context import Context
 
 import asyncio
 import logging
@@ -13,8 +15,8 @@ import time
 #consume from KAFKA_RAW_TOPIC, transform data, and produce to KAFKA_TOPIC
 
 logger = logging.getLogger("producer_service.kafka_producer")
-
 tracer = trace.get_tracer(__name__)
+propagator = TraceContextTextMapPropagator()
 
 MESSAGES_PRODUCED = Counter('producer_messages_sent_total', 'Total messages sent to Kafka')
 
@@ -40,6 +42,60 @@ def create_consumer():
         max_poll_records=500
     )
 
+async def process_and_send_message(record, producer, dlq_producer):
+    # Extract trace context from incoming Kafka message headers
+    carrier = {}
+    if record.headers:
+        for key, value in record.headers:
+            if isinstance(value, bytes):
+                carrier[key] = value.decode('utf-8')
+            else:
+                carrier[key] = value
+    
+    # extract the parent context from the carrier
+    parent_context = propagator.extract(carrier=carrier)
+    
+    # start span with extracted parent context
+    with tracer.start_as_current_span("process_raw_message", context=parent_context) as span:
+        try:
+            span.set_attribute("kafka.topic", record.topic)
+            span.set_attribute("kafka.partition", record.partition)
+            span.set_attribute("kafka.offset", record.offset)
+            
+            data_str = record.value.decode('utf-8')
+            data = json.loads(data_str)
+            
+            #validate the data        
+            if not isinstance(data, dict):
+                raise ValueError(f"Invalid data format received: {data}")
+            if 'fetch_timestamp' not in data:
+                raise ValueError(f"Missing 'fetch_timestamp' in data: {data}")
+            
+            data['timestamp'] = data.pop('fetch_timestamp')
+            data['processing_timestamp'] = time.time()
+            
+            # inject trace context into outgoing message headers
+            headers = {}
+            propagator.inject(headers)
+            kafka_headers = [(k, v.encode('utf-8') if isinstance(v, str) else v) for k, v in headers.items()]
+            
+            await producer.send(KAFKA_TOPIC, value=data, headers=kafka_headers)
+            MESSAGES_PRODUCED.inc()
+            logger.info(f"Sent processed message to '{KAFKA_TOPIC}'")
+            
+        except Exception as validation_error:
+            
+            span.record_exception(validation_error)
+            span.set_status(Status(StatusCode.ERROR, str(validation_error)))
+            
+            logger.error(f"Validation error for message, sending to DLQ: {validation_error}")
+            
+            try: 
+                await dlq_producer.send(KAFKA_PIPELINE_DLQ_TOPIC, value=record.value)
+            except Exception as dlq_error:
+                logger.error(f"Failed to send message to DLQ: {dlq_error}")
+
+
 async def send_weather_data():
     producer = create_producer()
     dlq_producer = create_dlq_producer()
@@ -63,55 +119,18 @@ async def send_weather_data():
                 
                 logger.info(f"Received batch of {len(records)} messages from partition {topic_partition}.")
                 
-                tasks_to_send = []
-                tasks_to_dlq = []
-                
+                tasks = []
                 for record in records:
+                    tasks.append(
+                        process_and_send_message(record, producer, dlq_producer)
+                    )
                     
-                    with tracer.start_as_current_span("process_raw_message") as span:
-                        try:
-                            
-                            span.set_attribute("kafka.topic", record.topic)
-                            span.set_attribute("kafka.partition", record.partition)
-                            span.set_attribute("kafka.offset", record.offset)
-                            
-                            data_str = record.value.decode('utf-8')
-                            data = json.loads(data_str)
-                            
-                            #validate the data        
-                            if not isinstance(data, dict):
-                                raise ValueError(f"Invalid data format received: {data}")
-                            if 'fetch_timestamp' not in data:
-                                raise ValueError(f"Missing 'fetch_timestamp' in data: {data}")
-                            
-                            data['timestamp'] = data.pop('fetch_timestamp')
-                            data['processing_timestamp'] = time.time()
-                            
-                            tasks_to_send.append(
-                                producer.send(KAFKA_TOPIC, value=data)
-                            )
-                            
-                        except Exception as validation_error:
-                            
-                            span.record_exception(validation_error)
-                            span.set_status(Status(StatusCode.ERROR, str(validation_error)))
-                            
-                            logger.error(f"Validation error for message, sending to DLQ: {validation_error}")
-                            tasks_to_dlq.append(
-                                dlq_producer.send(KAFKA_PIPELINE_DLQ_TOPIC, value=record.value)
-                            )
-
-                if tasks_to_send:
-                    await asyncio.gather(*tasks_to_send)
-                    MESSAGES_PRODUCED.inc(len(tasks_to_send))
-                    logger.info(f"Sent {len(tasks_to_send)} processed messages to '{KAFKA_TOPIC}'")
-                
-                if tasks_to_dlq:
-                    await asyncio.gather(*tasks_to_dlq)
+                if tasks:
+                    await asyncio.gather(*tasks)
+                    logger.info(f"Processed and sent {len(tasks)} messages...")
                 
                 await consumer.commit({topic_partition: records[-1].offset + 1})
                 
-
     except KeyboardInterrupt:
         logger.info("Pipeline service interrupted by user")
     except Exception as e:

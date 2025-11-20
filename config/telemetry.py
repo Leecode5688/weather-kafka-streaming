@@ -29,7 +29,7 @@ def setup_otel(service_name: str):
         provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
         trace.set_tracer_provider(provider)
         
-        propagate.set_text_map_propagator(TraceContextTextMapPropagator())
+        propagate.set_global_textmap(TraceContextTextMapPropagator())
         
         logger.info(f"OpenTelemetry tracing set up for service: {service_name} and exporting to {otlp_endpoint}")
             
