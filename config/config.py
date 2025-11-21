@@ -30,7 +30,7 @@ KAFKA_CONSUMER_DLQ_TOPIC = os.getenv("KAFKA_CONSUMER_DLQ_TOPIC", "weather_data_d
 
 TIME_OUT = int(os.getenv("TIME_OUT", 600))
 BATCH_TIMEOUT = int(os.getenv("BATCH_TIMEOUT", 5))
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", 500))
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", 2000))
 
 #prometheus metrics port
 CONSUMER_METRICS_PORT = int(os.getenv("CONSUMER_METRICS_PORT", 8000))

@@ -4,7 +4,7 @@ from prometheus_client import Counter
 import requests
 import logging
 import httpx
-import json
+import orjson
 import os
 
 station_ids_of_interest=STATION_IDS_OF_INTEREST

@@ -90,7 +90,7 @@ In the `config/` directory, create a file named `.env`. Copy the following conte
 
 	TIME_OUT=1800
 	BATCH_TIMEOUT=5
-	BATCH_SIZE=500
+	BATCH_SIZE=2000
 	LOG_FILE=logs/pipeline.log
 	LOG_LEVEL=INFO
 

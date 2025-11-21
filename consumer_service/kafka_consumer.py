@@ -51,95 +51,242 @@ MONGO_WRITE_LATENCY = Histogram(
     buckets=CUSTOM_BUCKET
 )
 
-MIN_BATCH_SIZE = 10
-MAX_BATCH_SIZE = 2000
-TARGET_WRITE_LATENCY = 0.5
-#linear scaling if fast
-ADJUSTMENT_FACTOR_UP = 10
-#reduce by 20% if slow
-ADJUSTMENT_FACTOR_DOWN = 0.8
 
+QUEUE_MAX_SIZE = 5000
 MAX_DB_RETRIES = 5
 INITIAL_RETRY_DELAY = 1.0
 MAX_RETRY_DELAY = 15.0
 
-async def flush_batch_async(consumer, collection, operations, total_latencies, pipeline_latencies):
+async def store_batch_with_retries(collection, operations):
+    """
+        write to mongoDB with retries
+        return true if successful, false if all retries failed
+    """
     if not operations:
-        return 0, 0.0
+        return True
     
-    with tracer.start_as_current_span("flush_async_batch") as span:
-        try:
-            span.set_attribute("batch.size", len(operations))
+    attempt = 0
+    current_delay = INITIAL_RETRY_DELAY
             
-            start_time = time.time()
-            success = False
-            attempt = 0
-            current_delay = INITIAL_RETRY_DELAY
+    while attempt < MAX_DB_RETRIES:
+        try: 
+            attempt+=1
+            with MONGO_WRITE_LATENCY.time():
+                success = await store_weather_batch_async(collection, operations)
             
-            while attempt < MAX_DB_RETRIES:
-                try: 
-                    attempt+=1
-                    with MONGO_WRITE_LATENCY.time():
-                        success = await store_weather_batch_async(collection, operations)
-                    if success:
-                        break
-                    else:
-                        logger.warning(f"MongoDB write returned False (Attempt {attempt}/{MAX_DB_RETRIES})")                    
-                except Exception as e:
-                    logger.error(f"Error writing to MongoDB (Attempt {attempt}/{MAX_DB_RETRIES}): {e}")
-                    span.record_exception(e)
-
-                if attempt < MAX_DB_RETRIES:
-                    sleep_time = current_delay * (1 + random.uniform(-0.1, 0.1))
-                    logger.info(f"Retrying batch write in {sleep_time:.2f}s...")            
-                    await asyncio.sleep(sleep_time)
-                    current_delay = min(current_delay * 2, MAX_RETRY_DELAY)
-            
-            write_duration = time.time() - start_time
-            
-            #real failure, exausted all retries
-            if not success:
-                logger.critical("Failed to store batch to MongoDB, offset not committed.")
-                span.set_status(Status(StatusCode.ERROR, "Failed to store batch to MongoDB"))
-                return 0, write_duration
-            
-            #success path
-            try:
-                await consumer.commit()
-            except Exception as commit_error:
-                logger.critical(f"Failed to commit Kafka offsets: {commit_error}")            
-                return 0, write_duration
-            
-            batch_size = len(operations)
-            MESSAGES_CONSUMED.inc(batch_size)
-
-            # record TOTAL latency (Fetch => DB)
-            for latency in total_latencies:
-                TOTAL_E2E_LATENCY.observe(latency)
-            
-            #record PIPELINE latency (pipeline => DB)
-            for latency in pipeline_latencies:
-                PIPELINE_LAG.observe(latency)
-            
-            logger.info(f"Flushed batch of {batch_size} messages to MongoDB and committed offsets.")
-            return batch_size, write_duration
-            
-
+            if success:
+                return True
+            else:
+                logger.warning(f"MongoDB write returned False (Attempt {attempt}/{MAX_DB_RETRIES})")                    
+        
         except Exception as e:
-            span.record_exception(e)
-            span.set_status(Status(StatusCode.ERROR, str(e)))
-            logger.error(f"Error flushing async batch: {e}")
-            return 0, 0.0
+            logger.error(f"Error writing to MongoDB (Attempt {attempt}/{MAX_DB_RETRIES}): {e}")
 
+        if attempt < MAX_DB_RETRIES:
+            sleep_time = current_delay * (1 + random.uniform(-0.1, 0.1))
+            logger.info(f"Retrying batch write in {sleep_time:.2f}s...")            
+            await asyncio.sleep(sleep_time)
+            current_delay = min(current_delay * 2, MAX_RETRY_DELAY)
+
+    logger.critical("Failed to store batch to MongoDB after exhausting retries.")
+    return False
+            
+async def fetch_message_task(consumer, internal_queue, stop_event):
+    """
+        continuously fetches from Kafka and puts into internal queue
+    """
+    logger.info("Starting Kafka fetch task... :)")
+    try: 
+        while not stop_event.is_set():
+            result = await consumer.getmany(timeout_ms=1000, max_records=BATCH_SIZE)
+            if result:
+                for topic_partition, records in result.items():
+                    for record in records:
+                        #will pause if the queue is full
+                        await internal_queue.put(record)
+            
+            #small yield for other tasks
+            await asyncio.sleep(0.01)
+    except Exception as e:
+        logger.error(f"Error in fetch_message_task: {e}")
+    finally:
+        #sentinel to tell writer that we are done
+        await internal_queue.put(None)
+        logger.info("Fetch task stopped...")
+        
+async def db_writer_task(consumer, collection, dlq_producer, internal_queue, stop_event):
+    """
+        pulls from queue, processes (validates), accumulates into batches, writes to mongoDB
+    """
+    logger.info("Starting DB writer task... :)")
+    
+    operations = []
+    total_latencies = []
+    pipeline_latencies = []
+    batch_deadline = None
+    
+    while True:
+        try: 
+            
+            if operations and batch_deadline:
+                time_remaining = batch_deadline - time.time()
+                wait_timeout = max(0, time_remaining)
+            else:
+                wait_timeout = None
+            
+            try:
+                record = await asyncio.wait_for(internal_queue.get(), timeout=wait_timeout)
+            except asyncio.TimeoutError:
+                if operations:
+                    logger.info(f"Batch timeout of {BATCH_TIMEOUT}s reached! Flushing {len(operations)} records")
+                    success = await store_batch_with_retries(collection, operations)
+                    
+                    if success:
+                        
+                        MESSAGES_CONSUMED.inc(len(operations))
+                        for lat in total_latencies:
+                            TOTAL_E2E_LATENCY.observe(lat)
+                        for lat in pipeline_latencies:
+                            PIPELINE_LAG.observe(lat)
+                        await consumer.commit()
+                    else:
+                        stop_event.set()
+                        raise RuntimeError("Database write failed on timeout!!")
+                    operations.clear()
+                    total_latencies.clear()
+                    pipeline_latencies.clear()
+                    batch_deadline = None
+                continue
+                    
+            #receive the sentinel, exit
+            if record is None:
+                if operations:
+                    await store_batch_with_retries(collection, operations)
+                break
+            
+            if not operations and batch_deadline is None:
+                batch_deadline = time.time() + BATCH_TIMEOUT
+            
+            records_to_process = [record]
+            
+            while len(records_to_process) < BATCH_SIZE:
+                try:
+                    next_rec = internal_queue.get_nowait()
+                    if next_rec is None:
+                        
+                        await internal_queue.put(None)
+                        break
+                    records_to_process.append(next_rec)
+                except asyncio.QueueEmpty:
+                    break
+            
+            current_batch_ops = []
+            
+            for rec in records_to_process:
+                
+                carrier = {}
+                if rec.headers:
+                    for key, value in rec.headers:
+                        if isinstance(value, bytes):
+                            carrier[key] = value.decode('utf-8')
+                        else:
+                            carrier[key] = value
+                parent_context = propagator.extract(carrier=carrier)
+                with tracer.start_as_current_span("process_data_message", context=parent_context) as span:
+                    try: 
+                        span.set_attribute("kafka.topic", rec.topic)
+                        span.set_attribute("kafka.partition", rec.partition)
+                        span.set_attribute("kafka.offset", rec.offset)
+                        
+                        current_time = time.time()
+                        data = orjson.loads(rec.value)
+                        
+                        if isinstance(data, dict) and data.get('timestamp'):
+                            try:
+                                total_lag = current_time - float(data['timestamp'])
+                                if total_lag >= 0:
+                                    total_latencies.append(total_lag)
+                            except (TypeError, ValueError):
+                                logger.warning(f"Invalid timestamp format in message: {data.get('timestamp')}")
+                        
+                        if isinstance(data, dict) and data.get('processing_timestamp'):
+                            try:
+                                pipeline_lag = current_time - float(data['processing_timestamp'])
+                                if pipeline_lag >= 0:
+                                    pipeline_latencies.append(pipeline_lag)
+                            except (TypeError, ValueError):
+                                logger.warning(f"Invalid processing_timestamp format in message: {data.get('processing_timestamp')}")
+                        
+                        if not isinstance(data, dict):
+                            raise ValueError(f"Unexpected message format: {data}")
+                    
+                        if 'StationId' not in data or 'ObsTime' not in data:
+                            raise ValueError(f"Missing required fields in data: {data}")
+                        
+                        filtered = {
+                                "StationName": data.get('StationName'),
+                                "StationId": data.get('StationId'),
+                                "ObservationTime": data.get('ObsTime', {}).get('DateTime'),
+                                "Weather": data.get('WeatherElement', {}).get('Weather'),
+                                "AirTemperature": data.get('WeatherElement', {}).get('AirTemperature'),
+                                "WindSpeed": data.get('WeatherElement', {}).get('WindSpeed')
+                        }
+                        key = {"StationId": filtered["StationId"], "ObservationTime": filtered["ObservationTime"]}
+                        current_batch_ops.append(UpdateOne(key, {"$setOnInsert": filtered}, upsert=True))    
+                        
+                    except Exception as validation_error:
+                        
+                        span.record_exception(validation_error)
+                        span.set_status(Status(StatusCode.ERROR, str(validation_error)))
+                        logger.error(f"Validation failed, sending to DLQ: {validation_error}")
+                        
+                        try: 
+                            await dlq_producer.send(KAFKA_CONSUMER_DLQ_TOPIC, value=rec.value)
+                        except Exception as dlq_error:
+                            logger.error(f"Failed to send message to DLQ: {dlq_error}")
+            
+            operations.extend(current_batch_ops)
+            
+            #write to db if buffer is full
+            if len(operations) >= BATCH_SIZE:
+                success = await store_batch_with_retries(collection, operations)
+                
+                if success:
+                    MESSAGES_CONSUMED.inc(len(operations))
+                    for lat in total_latencies:
+                        TOTAL_E2E_LATENCY.observe(lat)
+                    for lat in pipeline_latencies:
+                        PIPELINE_LAG.observe(lat)
+
+                    await consumer.commit()
+                    logger.info(f"Stored batch of {len(operations)} to MongoDB.")
+                else:
+                    stop_event.set()
+                    raise RuntimeError("Database write failed :(")
+
+                operations.clear()
+                total_latencies.clear()
+                pipeline_latencies.clear()
+                batch_deadline = None
+        
+        except Exception as e:
+            logger.error(f"Error in db_writer_task: {e}")
+            if stop_event.is_set():
+                break
+    
+    logger.info("DB writer task finished...")
+                    
 async def batch_consume_weather_data_async(stop_event: asyncio.Event):
-
+    """
+    set up connections and start the fetcher and writer tasks
+    """
     dlq_producer = AIOKafkaProducer(
         bootstrap_servers=KAFKA_BROKER
     )
     consumer = AIOKafkaConsumer(
         KAFKA_TOPIC, 
         bootstrap_servers=KAFKA_BROKER,
-        auto_offset_reset='latest',
+        auto_offset_reset='earliest',
         enable_auto_commit=False,
         group_id='weather-consumer-group',
         max_poll_records=5000
@@ -153,146 +300,23 @@ async def batch_consume_weather_data_async(stop_event: asyncio.Event):
         await consumer.start()
         await dlq_producer.start()
         logger.info("MongoDB connection established and collection ready.")
-    except Exception as e:
-        logger.error(f"Error starting services: {e}")
-        return
-
-    operations = []
-    batch_total_latencies = []
-    batch_pipeline_latencies = []
-    batch_start_time = time.time()
-    
-    current_batch_size = BATCH_SIZE
-    BASE_TIMEOUT = BATCH_TIMEOUT   
-    JITTER_PCT = 0.1
-    next_flush_deadline = time.time() + BASE_TIMEOUT * (1 + random.uniform(-JITTER_PCT, JITTER_PCT))
-    
-    try: 
-        while not stop_event.is_set():
-            result = await consumer.getmany(
-                timeout_ms=1000,
-                max_records=current_batch_size
-            )
-
-            now = time.time()        
         
-            if result:
-                for topic_partition, records in result.items():
-                    for record in records:
-                        # Extract trace context from incoming Kafka message headers
-                        carrier = {}
-                        if record.headers:
-                            for key, value in record.headers:
-                                if isinstance(value, bytes):
-                                    carrier[key] = value.decode('utf-8')
-                                else:
-                                    carrier[key] = value
-                        
-                        # Extract the parent context from the carrier
-                        parent_context = propagator.extract(carrier=carrier)
-                        
-                        # Create span with extracted parent context
-                        with tracer.start_as_current_span("process_data_message", context=parent_context) as span:
-                            try: 
-                                span.set_attribute("kafka.topic", record.topic)
-                                span.set_attribute("kafka.partition", record.partition)
-                                span.set_attribute("kafka.offset", record.offset)
-                                
-                                current_time = time.time()
-                                data_str = record.value.decode('utf-8')
-                                data = orjson.loads(record.value)
-                                # handle latency using payload timestamp if present
-                                if isinstance(data, dict) and data.get('timestamp'):
-                                    try:
-                                        total_lag = current_time - float(data['timestamp'])
-                                        if total_lag >= 0:
-                                            batch_total_latencies.append(total_lag)
-                                    except (TypeError, ValueError):
-                                        logger.warning(f"Invalid timestamp format in message: {data.get('timestamp')}")
-                                
-                                if isinstance(data, dict) and data.get('processing_timestamp'):
-                                    try:
-                                        pipeline_lag = current_time - float(data['processing_timestamp'])
-                                        if pipeline_lag >= 0:
-                                            batch_pipeline_latencies.append(pipeline_lag)
-                                    except (TypeError, ValueError):
-                                        logger.warning(f"Invalid processing_timestamp format in message: {data.get('processing_timestamp')}")
-                                
-                                if not isinstance(data, dict):
-                                    raise ValueError(f"Unexpected message format: {data}")
-                        
-                                #check for required fields
-                                if 'StationId' not in data or 'ObsTime' not in data:
-                                    raise ValueError(f"Missing required fields in data: {data}")
-                                
-                                filtered = {
-                                        "StationName": data.get('StationName'),
-                                        "StationId": data.get('StationId'),
-                                        "ObservationTime": data.get('ObsTime', {}).get('DateTime'),
-                                        "Weather": data.get('WeatherElement', {}).get('Weather'),
-                                        "AirTemperature": data.get('WeatherElement', {}).get('AirTemperature'),
-                                        "WindSpeed": data.get('WeatherElement', {}).get('WindSpeed')
-                                }
-                                key = {"StationId": filtered["StationId"], "ObservationTime": filtered["ObservationTime"]}
-                                operations.append(UpdateOne(key, {"$setOnInsert": filtered}, upsert=True))    
-
-                                if len(operations) >= current_batch_size:
-                                    flushed, duration = await flush_batch_async(consumer, collection, operations, batch_total_latencies, batch_pipeline_latencies)
-                                    
-                                    if flushed == 0:
-                                        logger.critical("Database unreachable, crashing consumer to trigger restart.")
-                                        raise RuntimeError("Database Write Failed")
-                                    else:
-                                        
-                                        if duration < TARGET_WRITE_LATENCY:
-                                            current_batch_size = min(MAX_BATCH_SIZE, current_batch_size + ADJUSTMENT_FACTOR_UP)
-                                        else:
-                                            current_batch_size = max(MIN_BATCH_SIZE, int(current_batch_size * ADJUSTMENT_FACTOR_DOWN))
-             
-                                                
-                                        logger.debug(f"Adjusted batch size to {current_batch_size} based on write duration {duration:.3f}s")
-                                        
-                                        operations.clear()
-                                        batch_total_latencies.clear()
-                                        batch_pipeline_latencies.clear()
-                                        batch_start_time = time.time()
-                                
-                            except Exception as validation_error:
-                                
-                                span.record_exception(validation_error)
-                                span.set_status(Status(StatusCode.ERROR, str(validation_error)))
-                                logger.error(f"Validation failed, sending to DLQ: {validation_error}")
-                                await dlq_producer.send(KAFKA_CONSUMER_DLQ_TOPIC, value=record.value)
-
-            now = time.time()
-            if operations and (now > next_flush_deadline):
-                logger.info("Batch timeout triggered...")                
-                flushed, duration = await flush_batch_async(consumer, collection, operations, batch_total_latencies, batch_pipeline_latencies)
-                if flushed == 0:
-                    logger.critical("Database unreachable, crashing consumer to trigger restart.")
-                    raise RuntimeError("Database Write Failed")
-                else:
-                    if duration > TARGET_WRITE_LATENCY and current_batch_size > MIN_BATCH_SIZE:
-                        current_batch_size = max(MIN_BATCH_SIZE, int(current_batch_size * ADJUSTMENT_FACTOR_DOWN))
-                        logger.debug(f"Reduced batch size to {current_batch_size} due to high write latency {duration:.3f}s")
-                        
-                    operations.clear()
-                    batch_total_latencies.clear()
-                    batch_pipeline_latencies.clear()
-
-                jitter = random.uniform(-BASE_TIMEOUT * JITTER_PCT, BASE_TIMEOUT * JITTER_PCT)
-                next_flush_deadline = time.time() + BASE_TIMEOUT + jitter
-                
+        internal_queue = asyncio.Queue(maxsize=QUEUE_MAX_SIZE)
+        fetcher_task = asyncio.create_task(
+            fetch_message_task(consumer, internal_queue, stop_event)
+        )
+        writer_task = asyncio.create_task(
+            db_writer_task(consumer, collection, dlq_producer, internal_queue, stop_event)
+        )
+        
+        await asyncio.gather(fetcher_task, writer_task)
+        
     except Exception as e:
-        logger.error(f"Error occurred: {e}")
+        logger.error(f"Fatal error in consumer service: {e}")
     finally:
-        logger.info("Shutdown signal received. Flushing remaining data...")
-        if operations:
-            await flush_batch_async(consumer, collection, operations, batch_total_latencies, batch_pipeline_latencies)
+        logger.info("Shutting down consumer service...")
+        
         if mongo_client:
             close_connection(mongo_client)
-        
         await consumer.stop()
         await dlq_producer.stop()
-        logger.info("Kafka async consumer and DLQ producer stopped..")
-        
