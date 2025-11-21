@@ -96,7 +96,7 @@ async def process_and_send_message(record, producer, dlq_producer):
                 logger.error(f"Failed to send message to DLQ: {dlq_error}")
 
 
-async def send_weather_data():
+async def send_weather_data(stop_event: asyncio.Event):
     producer = create_producer()
     dlq_producer = create_dlq_producer()
     consumer = create_consumer()
@@ -107,7 +107,7 @@ async def send_weather_data():
     await consumer.start()
     
     try: 
-        while True:
+        while not stop_event.is_set():
             result = await consumer.getmany(timeout_ms=1000, max_records=500)
             
             if not result:
@@ -131,10 +131,6 @@ async def send_weather_data():
                 
                 await consumer.commit({topic_partition: records[-1].offset + 1})
                 
-    except KeyboardInterrupt:
-        logger.info("Pipeline service interrupted by user")
-    except Exception as e:
-        logger.error(f"Error in pipeline service: {e}")
     finally: 
         await producer.stop()
         await dlq_producer.stop()

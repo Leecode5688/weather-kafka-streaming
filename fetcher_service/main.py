@@ -5,6 +5,7 @@ import json
 import threading
 import asyncio
 import httpx
+import signal
 from config.telemetry import setup_otel
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.aiokafka import AIOKafkaInstrumentor
@@ -49,7 +50,7 @@ async def prepare_and_send_record(entry, producer):
             span.record_exception(e)
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
 
-async def run_fetcher_async():
+async def run_fetcher_async(stop_event: asyncio.Event):
     logger.info("Starting async fetcher service...")
     producer = create_producer()
         
@@ -57,7 +58,7 @@ async def run_fetcher_async():
         await producer.start()
         logger.info("AIOKafkaProducer started...")
         try: 
-            while True:
+            while not stop_event.is_set():
                 with tracer.start_as_current_span("fetch_and_process_weather") as parent_span:
                     weather_data = await get_weather_async(client, API_URL)
                     
@@ -74,16 +75,17 @@ async def run_fetcher_async():
                         if tasks:
                             await asyncio.gather(*tasks)
                             logger.info(f"Flushed {len(tasks)} raw weather records to {KAFKA_RAW_TOPIC}")
-
                     else:
                         logger.warning("No weather data fetched this interval")
-                    
-                await asyncio.sleep(FETCH_INTERVAL)    
-                
-        except KeyboardInterrupt:
-            logger.info("Fetcher service stopped by user.")
+                        
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=FETCH_INTERVAL)
+                except asyncio.TimeoutError:
+                    pass
+                                
+
         finally: 
-            producer.close()
+            await producer.stop()
             logger.info("Fetcher kafka producer closed.")
             
                 
@@ -93,7 +95,15 @@ if __name__ == "__main__":
     threading.Thread(target=lambda: start_http_server(FETCHER_METRICS_PORT), daemon=True).start()
     logger.info(f"Prometheus metrics server started on port {FETCHER_METRICS_PORT}")
     
-    try: 
-        asyncio.run(run_fetcher_async())
-    except KeyboardInterrupt:
-        logger.info("Fetcher service shut down.")
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    stop_event = asyncio.Event()
+    
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, lambda: stop_event.set())
+        
+    try:
+        loop.run_until_complete(run_fetcher_async(stop_event))
+    finally:
+        loop.close()
+        

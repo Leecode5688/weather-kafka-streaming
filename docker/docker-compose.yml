@@ -313,7 +313,8 @@ services:
       - PYTHONUNBUFFERED=1
       - KAFKA_BROKER=kafka-1:9092,kafka-2:9092,kafka-3:9092
       - TZ=Asia/Taipei
-    entrypoint: ["/bin/sh", "-c", "echo 'Waiting 10s for kafka cluster to stabilize....' && sleep 10 && python -m pipeline_service.main"]
+    restart: on-failure
+    entrypoint: ["/bin/sh", "-c", "echo 'Waiting 10s for kafka cluster to stabilize....' && sleep 10 && exec python -m pipeline_service.main"]
     depends_on:
       kafka-1: 
         condition: service_healthy
@@ -348,8 +349,8 @@ services:
       - PYTHONUNBUFFERED=1
       - KAFKA_BROKER=kafka-1:9092,kafka-2:9092,kafka-3:9092
       - TZ=Asia/Taipei
-    
-    entrypoint: ["/bin/sh", "-c", "echo 'Waiting 10s for kafka cluster to stabilize....' && sleep 10 && python -m consumer_service.main"]
+    restart: on-failure
+    entrypoint: ["/bin/sh", "-c", "echo 'Waiting 10s for kafka cluster to stabilize....' && sleep 30 && exec python -m consumer_service.main"]
     depends_on:
       kafka-1: 
         condition: service_healthy
@@ -391,7 +392,8 @@ services:
       - PYTHONUNBUFFERED=1
       - KAFKA_BROKER=kafka-1:9092,kafka-2:9092,kafka-3:9092
       - TZ=Asia/Taipei
-    entrypoint: ["/bin/sh", "-c", "echo 'Waiting 10s for Kafka cluster to stabilize...' && sleep 10 && python -m fetcher_service.main"]
+    restart: on-failure
+    entrypoint: ["/bin/sh", "-c", "echo 'Waiting 10s for Kafka cluster to stabilize...' && sleep 10 && exec python -m fetcher_service.main"]
     depends_on:
       kafka-1:
         condition: service_healthy

@@ -23,19 +23,32 @@ logger = logging.getLogger("consumer_service.kafka_consumer")
 tracer = trace.get_tracer(__name__)
 propagator = TraceContextTextMapPropagator()
 
+CUSTOM_BUCKET = (
+    0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 
+    2.5, 5.0, 7.5, 10.0, 30.0, 60.0, 300.0, 1200.0, 3600.0
+)
+
 # Prometheus Metrics
 MESSAGES_CONSUMED = Counter(
     'consumer_messages_consumed_total',
     'Total messages successfully consumed and stored'
 )
-MESSAGES_LATENCY = Histogram(
+TOTAL_E2E_LATENCY = Histogram(
     'consumer_message_latency_seconds',
-    'End-to-end latency of messages based on timestamp field'
+    'End-to-end latency of messages based on timestamp field',
+    buckets=CUSTOM_BUCKET
+)
+
+PIPELINE_LAG = Histogram(
+    'consumer_pipeline_lag_seconds',
+    'Time frome Pipeline processing to MongoDB Write (Consumer Lag)', 
+    buckets=CUSTOM_BUCKET
 )
 
 MONGO_WRITE_LATENCY = Histogram(
     'consumer_mongo_db_write_latency_seconds',
-    'Time spent writing batches to MongoDB'
+    'Time spent writing batches to MongoDB', 
+    buckets=CUSTOM_BUCKET
 )
 
 MIN_BATCH_SIZE = 10
@@ -50,7 +63,7 @@ MAX_DB_RETRIES = 5
 INITIAL_RETRY_DELAY = 1.0
 MAX_RETRY_DELAY = 15.0
 
-async def flush_batch_async(consumer, collection, operations, latencies):
+async def flush_batch_async(consumer, collection, operations, total_latencies, pipeline_latencies):
     if not operations:
         return 0, 0.0
     
@@ -100,9 +113,14 @@ async def flush_batch_async(consumer, collection, operations, latencies):
             batch_size = len(operations)
             MESSAGES_CONSUMED.inc(batch_size)
 
-            for latency in latencies:
-                MESSAGES_LATENCY.observe(latency)
-                
+            # record TOTAL latency (Fetch => DB)
+            for latency in total_latencies:
+                TOTAL_E2E_LATENCY.observe(latency)
+            
+            #record PIPELINE latency (pipeline => DB)
+            for latency in pipeline_latencies:
+                PIPELINE_LAG.observe(latency)
+            
             logger.info(f"Flushed batch of {batch_size} messages to MongoDB and committed offsets.")
             return batch_size, write_duration
             
@@ -113,7 +131,7 @@ async def flush_batch_async(consumer, collection, operations, latencies):
             logger.error(f"Error flushing async batch: {e}")
             return 0, 0.0
 
-async def batch_consume_weather_data_async():
+async def batch_consume_weather_data_async(stop_event: asyncio.Event):
 
     dlq_producer = AIOKafkaProducer(
         bootstrap_servers=KAFKA_BROKER
@@ -140,7 +158,8 @@ async def batch_consume_weather_data_async():
         return
 
     operations = []
-    batch_latencies = []
+    batch_total_latencies = []
+    batch_pipeline_latencies = []
     batch_start_time = time.time()
     
     current_batch_size = BATCH_SIZE
@@ -149,7 +168,7 @@ async def batch_consume_weather_data_async():
     next_flush_deadline = time.time() + BASE_TIMEOUT * (1 + random.uniform(-JITTER_PCT, JITTER_PCT))
     
     try: 
-        while True: 
+        while not stop_event.is_set():
             result = await consumer.getmany(
                 timeout_ms=1000,
                 max_records=current_batch_size
@@ -179,17 +198,27 @@ async def batch_consume_weather_data_async():
                                 span.set_attribute("kafka.partition", record.partition)
                                 span.set_attribute("kafka.offset", record.offset)
                                 
+                                current_time = time.time()
                                 data_str = record.value.decode('utf-8')
                                 data = json.loads(data_str)
 
                                 # handle latency using payload timestamp if present
                                 if isinstance(data, dict) and data.get('timestamp'):
                                     try:
-                                        latency_seconds = time.time() - float(data['timestamp'])
-                                        if latency_seconds >= 0:
-                                            batch_latencies.append(latency_seconds)
+                                        total_lag = current_time - float(data['timestamp'])
+                                        if total_lag >= 0:
+                                            batch_total_latencies.append(total_lag)
                                     except (TypeError, ValueError):
                                         logger.warning(f"Invalid timestamp format in message: {data.get('timestamp')}")
+                                
+                                if isinstance(data, dict) and data.get('processing_timestamp'):
+                                    try:
+                                        pipeline_lag = current_time - float(data['processing_timestamp'])
+                                        if pipeline_lag >= 0:
+                                            batch_pipeline_latencies.append(pipeline_lag)
+                                    except (TypeError, ValueError):
+                                        logger.warning(f"Invalid processing_timestamp format in message: {data.get('processing_timestamp')}")
+                                
                                 if not isinstance(data, dict):
                                     raise ValueError(f"Unexpected message format: {data}")
                         
@@ -209,8 +238,12 @@ async def batch_consume_weather_data_async():
                                 operations.append(UpdateOne(key, {"$setOnInsert": filtered}, upsert=True))    
 
                                 if len(operations) >= current_batch_size:
-                                    flushed, duration = await flush_batch_async(consumer, collection, operations, batch_latencies)
-                                    if flushed > 0:
+                                    flushed, duration = await flush_batch_async(consumer, collection, operations, batch_total_latencies, batch_pipeline_latencies)
+                                    
+                                    if flushed == 0:
+                                        logger.critical("Database unreachable, crashing consumer to trigger restart.")
+                                        raise RuntimeError("Database Write Failed")
+                                    else:
                                         
                                         if duration < TARGET_WRITE_LATENCY:
                                             current_batch_size = min(MAX_BATCH_SIZE, current_batch_size + ADJUSTMENT_FACTOR_UP)
@@ -221,7 +254,8 @@ async def batch_consume_weather_data_async():
                                         logger.debug(f"Adjusted batch size to {current_batch_size} based on write duration {duration:.3f}s")
                                         
                                         operations.clear()
-                                        batch_latencies.clear()
+                                        batch_total_latencies.clear()
+                                        batch_pipeline_latencies.clear()
                                         batch_start_time = time.time()
                                 
                             except Exception as validation_error:
@@ -234,27 +268,28 @@ async def batch_consume_weather_data_async():
             now = time.time()
             if operations and (now > next_flush_deadline):
                 logger.info("Batch timeout triggered...")                
-                flushed, duration = await flush_batch_async(consumer, collection, operations, batch_latencies)
-
-                if flushed > 0:
+                flushed, duration = await flush_batch_async(consumer, collection, operations, batch_total_latencies, batch_pipeline_latencies)
+                if flushed == 0:
+                    logger.critical("Database unreachable, crashing consumer to trigger restart.")
+                    raise RuntimeError("Database Write Failed")
+                else:
                     if duration > TARGET_WRITE_LATENCY and current_batch_size > MIN_BATCH_SIZE:
                         current_batch_size = max(MIN_BATCH_SIZE, int(current_batch_size * ADJUSTMENT_FACTOR_DOWN))
                         logger.debug(f"Reduced batch size to {current_batch_size} due to high write latency {duration:.3f}s")
                         
                     operations.clear()
-                    batch_latencies.clear()
+                    batch_total_latencies.clear()
+                    batch_pipeline_latencies.clear()
 
                 jitter = random.uniform(-BASE_TIMEOUT * JITTER_PCT, BASE_TIMEOUT * JITTER_PCT)
                 next_flush_deadline = time.time() + BASE_TIMEOUT + jitter
                 
-                
-    except KeyboardInterrupt:
-        logger.info("Consumer interrupted by user.")
     except Exception as e:
         logger.error(f"Error occurred: {e}")
     finally:
+        logger.info("Shutdown signal received. Flushing remaining data...")
         if operations:
-            await flush_batch_async(consumer, collection, operations, batch_latencies)
+            await flush_batch_async(consumer, collection, operations, batch_total_latencies, batch_pipeline_latencies)
         if mongo_client:
             close_connection(mongo_client)
         
