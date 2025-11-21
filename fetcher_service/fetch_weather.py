@@ -3,6 +3,7 @@ from config.config import API_URL, STATION_IDS_OF_INTEREST
 from prometheus_client import Counter
 import requests
 import logging
+import httpx
 import json
 import os
 
@@ -13,16 +14,11 @@ logger = logging.getLogger("fetcher_service.fetch_weather")
 API_CALLS_SUCCESS = Counter('fetcher_api_calls_success_total', 'Total successful API calls')
 API_CALLS_FAILURE = Counter('fetcher_api_calls_failure_total', 'Total failed API calls')
 
-def fetch_weather_data():
-    """
-    fetch raw data from cwa taiwan's api, return the json response
-    raise exception if the response is not successful
-    """
-    response = requests.get(API_URL)
+async def fetch_weather_data_async(client: httpx.AsyncClient, api_url: str):
+    response = await client.get(api_url)
     response.raise_for_status()
     return response.json()
-
-
+        
 def filter_and_save_data(raw_data, station_ids_of_interest):
     """
     filter the result and construct the data
@@ -54,14 +50,13 @@ def filter_and_save_data(raw_data, station_ids_of_interest):
 
     return filtered
 
-def get_weather():
+async def get_weather_async(client: httpx.AsyncClient, api_url: str):
     try:
-        raw_data = fetch_weather_data()
-        filtered_data = filter_and_save_data(raw_data, STATION_IDS_OF_INTEREST)
+        raw_data = await fetch_weather_data_async(client, api_url)
         API_CALLS_SUCCESS.inc()
+        filtered_data = filter_and_save_data(raw_data, STATION_IDS_OF_INTEREST)
         return filtered_data
-    except requests.RequestException as e:
+    except httpx.RequestError as e: 
         logging.error(f"Error fetching data from API: {e}")
         API_CALLS_FAILURE.inc()
         return []
-    

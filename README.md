@@ -48,7 +48,7 @@ This project consists of the following key components:
 - Dead Letter Queues (DLQs): Two dedicated topics (weather_raw_dlq and weather_data_dlq) that capture any messages failing validation at either pipeline or consumer stage, preventing data loss. 
 - Kafka: The core of the streaming platform, decoupling the services.
 - Prometheus & Grafana: Scrape and visualize application metrics from these Python services.
-- Docker & Docker compose: Containerizes and archestrates this multi-service project. 
+- Docker & Docker compose: Containerizes and orchestrates this multi-service project. 
 
 The data flows through the system as follows: 
 - Valid data path: CWA API => Fetcher Service => Kafka (weather_raw topic) => Pipeline Service => Kafka (weather_data topic) => Consumer Service => MongoDB Sharded Cluster
@@ -56,6 +56,15 @@ The data flows through the system as follows:
 - Error Data Paths (DLQ): 
 	- Path 1: weather_raw => pipeline service (fails during validation) => Kafka (weather_raw_dlq)
 	- Path 2: weather_data => Consumer service (fails during validation) => Kafka (weather_data_dlq)
+
+## Project Structure: 
+├── config/             # Shared configuration and telemetry setup
+├── consumer_service/   # Kafka Consumer => MongoDB 
+├── docker/             # Dockerfiles and Grafana/Prometheus config
+├── fetcher_service/    # CWA API Fetcher => Kafka
+├── mongo-scripts/      # MongoDB Sharded Cluster initialization scripts
+├── pipeline_service/   # Kafka Stream Processor (Raw => Cleaned)
+└── mongodb_service/    # MongoDB connection and write logic
 
 ## How to Run the Project
 Prerequisites: Docker, Docker compose
@@ -65,30 +74,29 @@ In the `config/` directory, create a file named `.env`. Copy the following conte
     
     ```
     CWB_API_KEY=<Your_CWA_API_Key>
+
 	FETCH_INTERVAL=600
 	RUN_DURATION=3600
-
-	MONGO_URI=mongodb://mongos-router:27017/
+	MONGO_URI=mongodb://mongos-router:27017,mongos-router-2:27017/
 	MONGO_DB_NAME=weather_db
 	MONGO_COLLECTION_NAME=weather_data
-
 	KAFKA_BROKER=kafka:9092
 	KAFKA_TOPIC=weather_data
 	KAFKA_RAW_TOPIC=weather_raw
-
 	KAFKA_PIPELINE_DLQ_TOPIC=weather_raw_dlq
 	KAFKA_CONSUMER_DLQ_TOPIC=weather_data_dlq
 
 	TIME_OUT=1800
 	BATCH_TIMEOUT=5
 	BATCH_SIZE=500
-
 	LOG_FILE=logs/pipeline.log
 	LOG_LEVEL=INFO
 
 	CONSUMER_METRICS_PORT=8000
 	PRODUCER_METRICS_PORT=8001
 	FETCHER_METRICS_PORT=8002
+
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
 
     ```
 
@@ -107,6 +115,7 @@ In the `config/` directory, create a file named `.env`. Copy the following conte
 - Kafka UI: `http://localhost:8080`
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3000` (login: `admin`/`admin`)
+- Jaeger UI: `http://localhost:16686`
 - MongoDB: Connect at `mongodb://localhost:27017`
 
 ### Verify Data in MongoDB Shell
@@ -154,7 +163,7 @@ Verify: Go to the weather_data_dlq topic. You will see this message here. It wil
 1. Ensure all services are running.
 2. Execute the stress test script:    
     ```
-    docker exec -it weather_pipeline python -m producer_service.stress_test_producer
+    docker exec -it weather_pipeline python -m pipeline_service.stress_test_producer
     ```
     
 	This command runs a script inside the `weather_pipeline` container to generate a 10000 test data.

@@ -11,4 +11,4 @@ COPY . .
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
-CMD ["python", "-m", "producer_service.main"]
+CMD ["python", "-m", "pipeline_service.main"]

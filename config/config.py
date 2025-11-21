@@ -7,7 +7,7 @@ load_dotenv(dotenv_path="config/.env")
 #load weather api config
 API_KEY = os.getenv("CWB_API_KEY")
 API_URL = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0001-001?Authorization={API_KEY}"
-STATION_IDS_OF_INTEREST = ["C0C730"]
+STATION_IDS_OF_INTEREST = ["C0C730", "C0C790", "C0AJ80", "CAAH60"]
 #how often do we call the API
 FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL", 10))
 RUN_DURATION = int(os.getenv("RUN_DURATION", 3600))

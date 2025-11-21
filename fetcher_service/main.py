@@ -1,57 +1,109 @@
 import logging
 import os
 import time
-import json
+import orjson
 import threading
-from .fetch_weather import get_weather
-from config.config import FETCH_INTERVAL, FETCHER_METRICS_PORT, KAFKA_BROKER, KAFKA_RAW_TOPIC
+import asyncio
+import httpx
+import signal
+from config.telemetry import setup_otel
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.aiokafka import AIOKafkaInstrumentor
+    
+setup_otel("fetcher_service")
+AIOKafkaInstrumentor().instrument()
+HTTPXClientInstrumentor().instrument()
+
+from aiokafka import AIOKafkaProducer
+from config.config import FETCH_INTERVAL, FETCHER_METRICS_PORT, KAFKA_BROKER, KAFKA_RAW_TOPIC, API_URL
 from config.logging_config import setup_logger
+from .fetch_weather import get_weather_async
+from opentelemetry import trace
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 from prometheus_client import start_http_server
-from kafka import KafkaProducer
 
 logger = setup_logger("fetcher_service", "logs/fetcher.log")
 
+tracer = trace.get_tracer(__name__)
+propagator = TraceContextTextMapPropagator()
+
 def create_producer():
-    return KafkaProducer(
+    return AIOKafkaProducer(
         bootstrap_servers=KAFKA_BROKER,
-        api_version=(3, 9),
-        value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-    )
-def run_fetcher():
-    logger.info("Starting fetcher service...")
+        value_serializer=lambda v: orjson.dumps(v)
+        )
+
+async def prepare_and_send_record(entry, producer):
+    with tracer.start_as_current_span("prepare_raw_message") as span:
+        try: 
+            entry['fetch_timestamp'] = time.time()
+            span.set_attribute("station.id", entry.get("StationId", "unknown"))
+            
+            #inject trace context into Kafka message headers
+            headers = {}
+            propagator.inject(headers)
+            kafka_headers = [(k, v.encode('utf-8') if isinstance(v, str) else v) for k, v in headers.items()]
+            
+            await producer.send(KAFKA_RAW_TOPIC, value=entry, headers=kafka_headers)
+        except Exception as e:
+            logger.error(f"Failed to prepare and send record: {e}")
+            span.record_exception(e)
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+
+async def run_fetcher_async(stop_event: asyncio.Event):
+    logger.info("Starting async fetcher service...")
     producer = create_producer()
-    try:
-        while True:
-            weather_data = get_weather()
-            if weather_data:
-                logger.info(f"Fetched {len(weather_data)} weather records")
-                # # Optional: print first record for verification
-                # logger.debug(f"Sample data: {weather_data[0]}")
-                for entry in weather_data:
-                    try: 
-                        # add fetch timestamp, we can use this to track latency later
-                        entry['fetch_timestamp'] = time.time()
-                        producer.send(KAFKA_RAW_TOPIC, value=entry)
-                    except Exception as e:
-                        logger.error(f"Failed to send raw data to kafka: {e}")
+        
+    async with httpx.AsyncClient() as client:
+        await producer.start()
+        logger.info("AIOKafkaProducer started...")
+        try: 
+            while not stop_event.is_set():
+                with tracer.start_as_current_span("fetch_and_process_weather") as parent_span:
+                    weather_data = await get_weather_async(client, API_URL)
+                    
+                    if weather_data:
+                        logger.info(f"Fetched {len(weather_data)} weather records")
+                        
+                        tasks = []
+                        
+                        for entry in weather_data:
+                            tasks.append(
+                                prepare_and_send_record(entry, producer)
+                            )
+                                
+                        if tasks:
+                            await asyncio.gather(*tasks)
+                            logger.info(f"Flushed {len(tasks)} raw weather records to {KAFKA_RAW_TOPIC}")
+                    else:
+                        logger.warning("No weather data fetched this interval")
+                        
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=FETCH_INTERVAL)
+                except asyncio.TimeoutError:
+                    pass
+                                
+
+        finally: 
+            await producer.stop()
+            logger.info("Fetcher kafka producer closed.")
+            
                 
-                producer.flush()
-                logger.info(f"Flushed {len(weather_data)} raw weather records to {KAFKA_RAW_TOPIC}")
-                
-            else:
-                logger.warning("No weather data fetched this interval")
-
-            time.sleep(FETCH_INTERVAL)
-
-    except KeyboardInterrupt:
-        logger.info("Fetcher service stopped by user.")
-    finally: 
-        producer.close()
-        logger.info("Fetcher kafka producer closed.")
-
 if __name__ == "__main__":
+    
     # Start Prometheus metrics server
     threading.Thread(target=lambda: start_http_server(FETCHER_METRICS_PORT), daemon=True).start()
     logger.info(f"Prometheus metrics server started on port {FETCHER_METRICS_PORT}")
-
-    run_fetcher()
+    
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    stop_event = asyncio.Event()
+    
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, lambda: stop_event.set())
+        
+    try:
+        loop.run_until_complete(run_fetcher_async(stop_event))
+    finally:
+        loop.close()
+        
