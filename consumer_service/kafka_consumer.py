@@ -15,7 +15,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 import logging
 import asyncio
 import random
-import json
+import orjson
 import time
 
 
@@ -200,8 +200,7 @@ async def batch_consume_weather_data_async(stop_event: asyncio.Event):
                                 
                                 current_time = time.time()
                                 data_str = record.value.decode('utf-8')
-                                data = json.loads(data_str)
-
+                                data = orjson.loads(record.value)
                                 # handle latency using payload timestamp if present
                                 if isinstance(data, dict) and data.get('timestamp'):
                                     try:

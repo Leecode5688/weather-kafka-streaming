@@ -1,7 +1,7 @@
 import logging
 import os
 import time
-import json
+import orjson
 import threading
 import asyncio
 import httpx
@@ -30,8 +30,8 @@ propagator = TraceContextTextMapPropagator()
 def create_producer():
     return AIOKafkaProducer(
         bootstrap_servers=KAFKA_BROKER,
-        value_serializer=lambda v: json.dumps(v).encode('utf-8'),
-    )
+        value_serializer=lambda v: orjson.dumps(v)
+        )
 
 async def prepare_and_send_record(entry, producer):
     with tracer.start_as_current_span("prepare_raw_message") as span:

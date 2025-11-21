@@ -9,7 +9,7 @@ from opentelemetry.context import Context
 
 import asyncio
 import logging
-import json
+import orjson
 import time
 
 #consume from KAFKA_RAW_TOPIC, transform data, and produce to KAFKA_TOPIC
@@ -23,7 +23,7 @@ MESSAGES_PRODUCED = Counter('producer_messages_sent_total', 'Total messages sent
 def create_producer():
     return AIOKafkaProducer(
         bootstrap_servers=KAFKA_BROKER,
-        value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+        value_serializer=lambda v: orjson.dumps(v)
     )    
     
 def create_dlq_producer():
@@ -63,7 +63,7 @@ async def process_and_send_message(record, producer, dlq_producer):
             span.set_attribute("kafka.offset", record.offset)
             
             data_str = record.value.decode('utf-8')
-            data = json.loads(data_str)
+            data = orjson.loads(record.value)            
             
             #validate the data        
             if not isinstance(data, dict):

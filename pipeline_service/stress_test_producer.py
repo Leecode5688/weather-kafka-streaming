@@ -1,5 +1,5 @@
 import logging
-import json
+import orjson
 import random
 import time
 import os
@@ -26,7 +26,7 @@ def create_producer():
     logger.info(f"Connecting to Kafka Broker at: {KAFKA_BROKER}") 
     return AIOKafkaProducer(
         bootstrap_servers=KAFKA_BROKER,
-        value_serializer=lambda v: json.dumps(v).encode('utf-8'),
+        value_serializer=lambda v: orjson.dumps(v),        
         request_timeout_ms=60000 
     )
     
