@@ -58,13 +58,15 @@ The data flows through the system as follows:
 	- Path 2: weather_data => Consumer service (fails during validation) => Kafka (weather_data_dlq)
 
 ## Project Structure: 
-├── config/             # Shared configuration and telemetry setup
-├── consumer_service/   # Kafka Consumer => MongoDB 
-├── docker/             # Dockerfiles and Grafana/Prometheus config
-├── fetcher_service/    # CWA API Fetcher => Kafka
-├── mongo-scripts/      # MongoDB Sharded Cluster initialization scripts
-├── pipeline_service/   # Kafka Stream Processor (Raw => Cleaned)
-└── mongodb_service/    # MongoDB connection and write logic
+```
+	├── config/             # Shared configuration and telemetry setup
+	├── consumer_service/   # Kafka Consumer => MongoDB 
+	├── docker/             # Dockerfiles and Grafana/Prometheus config
+	├── fetcher_service/    # CWA API Fetcher => Kafka
+	├── mongo-scripts/      # MongoDB Sharded Cluster initialization scripts
+	├── pipeline_service/   # Kafka Stream Processor (Raw => Cleaned)
+	└── mongodb_service/    # MongoDB connection and write logic
+```
 
 ## How to Run the Project
 Prerequisites: Docker, Docker compose
